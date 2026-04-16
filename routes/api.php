@@ -15,6 +15,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('/alumni/profile', [AlumniProfileController::class, 'show']);
     Route::put('/alumni/profile', [AlumniProfileController::class, 'update']);
+    Route::post('/alumni/photo', [AlumniProfileController::class, 'uploadPhoto']);
 
     // We will put things like creating posts, answering tracer studies,
     // and sending messages inside here later!
