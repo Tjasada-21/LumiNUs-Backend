@@ -22,9 +22,13 @@ class Alumni extends Authenticatable
         'date_of_birth',
         'sex',
         'year_graduated',
+        'alumni_photo',
+        'alumni_bio',
         'student_id_number',
         'email',
+        'phone_number',
         'password_hash',
+        'verification_status',
     ];
 
     // Hide the password when returning JSON data
