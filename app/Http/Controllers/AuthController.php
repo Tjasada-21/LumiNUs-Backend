@@ -3,8 +3,12 @@
 namespace App\Http\Controllers;
 
 use App\Models\Alumni;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
@@ -71,6 +75,115 @@ class AuthController extends Controller
         return response()->json([
             'alumni' => $alumni,
             'token' => $token
+        ]);
+    }
+
+    public function sendPasswordResetLink(Request $request)
+    {
+        $request->validate([
+            'email' => 'required|email',
+        ]);
+
+        $alumni = Alumni::where('email', $request->email)->first();
+
+        if (!$alumni) {
+            throw ValidationException::withMessages([
+                'email' => ['We could not find an account with that email address.'],
+            ]);
+        }
+
+        $token = Str::random(64);
+
+        DB::table('password_reset_tokens')->updateOrInsert(
+            ['email' => $alumni->email],
+            [
+                'token' => hash('sha256', $token),
+                'created_at' => now(),
+            ]
+        );
+
+        Mail::raw(
+            "Use this password reset token for your LumiNUs account:\n\n{$token}\n\nThis token expires in 60 minutes.",
+            function ($message) use ($alumni) {
+                $message->to($alumni->email)->subject('LumiNUs Password Reset');
+            }
+        );
+
+        return response()->json([
+            'message' => 'Password reset instructions have been sent to your email address.',
+        ]);
+    }
+
+    public function resetPassword(Request $request)
+    {
+        $request->validate([
+            'email' => 'required|email',
+            'token' => 'required|string',
+            'password' => 'required|string|min:8|confirmed',
+        ]);
+
+        $record = DB::table('password_reset_tokens')
+            ->where('email', $request->email)
+            ->first();
+
+        if (!$record) {
+            throw ValidationException::withMessages([
+                'email' => ['This reset token is invalid or has expired.'],
+            ]);
+        }
+
+        $isExpired = $record->created_at
+            ? Carbon::parse($record->created_at)->addMinutes(60)->isPast()
+            : true;
+
+        if ($isExpired || !hash_equals($record->token, hash('sha256', $request->token))) {
+            throw ValidationException::withMessages([
+                'token' => ['This reset token is invalid or has expired.'],
+            ]);
+        }
+
+        $alumni = Alumni::where('email', $request->email)->first();
+
+        if (!$alumni) {
+            throw ValidationException::withMessages([
+                'email' => ['We could not find an account with that email address.'],
+            ]);
+        }
+
+        $alumni->forceFill([
+            'password_hash' => Hash::make($request->password),
+        ])->save();
+
+        DB::table('password_reset_tokens')
+            ->where('email', $alumni->email)
+            ->delete();
+
+        return response()->json([
+            'message' => 'Your password has been reset successfully.',
+        ]);
+    }
+
+    public function resetAccountPassword(Request $request)
+    {
+        $alumni = $request->user();
+
+        $request->validate([
+            'student_id_number' => 'required|string',
+            'password' => 'required|string|min:8|confirmed',
+        ]);
+
+        if ($request->student_id_number !== $alumni->student_id_number) {
+            throw ValidationException::withMessages([
+                'student_id_number' => ['The student number does not match this account.'],
+            ]);
+        }
+
+        $alumni->forceFill([
+            'password_hash' => Hash::make($request->password),
+        ])->save();
+
+        return response()->json([
+            'message' => 'Your password has been updated successfully.',
         ]);
     }
 }
