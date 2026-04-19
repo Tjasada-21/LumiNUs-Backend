@@ -22,12 +22,14 @@ class Alumni extends Authenticatable
         'date_of_birth',
         'sex',
         'year_graduated',
+        'program',
         'alumni_photo',
         'alumni_bio',
         'student_id_number',
         'email',
         'phone_number',
         'password_hash',
+        'card_photo',
         'verification_status',
     ];
 
