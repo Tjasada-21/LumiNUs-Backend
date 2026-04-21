@@ -8,7 +8,6 @@ use App\Models\Post;
 use App\Models\Reaction;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Storage;
 
 class PostController extends Controller
 {
@@ -37,7 +36,13 @@ class PostController extends Controller
             return $trimmedPath;
         }
 
-        return rtrim($request->getSchemeAndHttpHost(), '/') . '/' . ltrim($trimmedPath, '/');
+        $normalizedPath = ltrim($trimmedPath, '/');
+
+        if (str_starts_with($normalizedPath, 'storage/')) {
+            $normalizedPath = substr($normalizedPath, strlen('storage/'));
+        }
+
+        return rtrim($request->getSchemeAndHttpHost(), '/') . '/storage/' . ltrim($normalizedPath, '/');
     }
 
     public function index(Request $request)

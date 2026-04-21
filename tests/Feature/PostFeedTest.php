@@ -41,7 +41,7 @@ class PostFeedTest extends TestCase
 
         ImagesPost::create([
             'post_id' => $post->id,
-            'image_path' => 'https://example.com/post-image.jpg',
+            'image_path' => 'posts/post-image.jpg',
         ]);
 
         $response = $this->get('/api/posts');
@@ -49,6 +49,7 @@ class PostFeedTest extends TestCase
         $response->assertOk();
         $response->assertJsonPath('posts.0.caption', 'Feed post');
         $response->assertJsonPath('posts.0.alumni.first_name', 'Jane');
-        $response->assertJsonPath('posts.0.images.0.image_path', 'https://example.com/post-image.jpg');
+        $response->assertJsonPath('posts.0.images.0.image_path', 'posts/post-image.jpg');
+        $this->assertStringContainsString('/storage/posts/post-image.jpg', $response->json('posts.0.images.0.image_url'));
     }
 }
