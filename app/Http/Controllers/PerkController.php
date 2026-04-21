@@ -8,6 +8,47 @@ use Illuminate\Support\Facades\Schema;
 
 class PerkController extends Controller
 {
+    private function resolveImageUrl(Request $request, ?string $imagePath): string
+    {
+        $trimmedPath = trim((string) $imagePath);
+
+        if ($trimmedPath === '') {
+            return $trimmedPath;
+        }
+
+        if (preg_match('/^https?:\/\//i', $trimmedPath)) {
+            if (preg_match('/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i', $trimmedPath)) {
+                $parsedPath = parse_url($trimmedPath, PHP_URL_PATH) ?: '';
+                $parsedQuery = parse_url($trimmedPath, PHP_URL_QUERY);
+
+                $resolvedUrl = rtrim($request->getSchemeAndHttpHost(), '/') . '/' . ltrim($parsedPath, '/');
+
+                if ($parsedQuery) {
+                    $resolvedUrl .= '?' . $parsedQuery;
+                }
+
+                return $resolvedUrl;
+            }
+
+            return $trimmedPath;
+        }
+
+        $normalizedPath = ltrim($trimmedPath, '/');
+
+        $publicBaseUrl = rtrim((string) config('filesystems.disks.s3.url', ''), '/');
+        $bucketName = trim((string) config('filesystems.disks.s3.bucket', ''), '/');
+
+        if ($publicBaseUrl !== '' && $bucketName !== '') {
+            return $publicBaseUrl . '/' . $bucketName . '/' . ltrim($normalizedPath, '/');
+        }
+
+        if (str_starts_with($normalizedPath, 'storage/')) {
+            $normalizedPath = substr($normalizedPath, strlen('storage/'));
+        }
+
+        return rtrim($request->getSchemeAndHttpHost(), '/') . '/storage/' . ltrim($normalizedPath, '/');
+    }
+
     public function index(Request $request)
     {
         $imagesTable = 'images_perks';
@@ -36,7 +77,7 @@ class PerkController extends Controller
                 return [
                     'id' => $image->id,
                     'image_path' => $imagePath,
-                    'image_url' => $imagePath,
+                    'image_url' => $this->resolveImageUrl(request(), $imagePath),
                 ];
             })->values();
 
