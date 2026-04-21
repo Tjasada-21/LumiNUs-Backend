@@ -11,6 +11,10 @@ class Alumni extends Authenticatable
 {
     use HasApiTokens, HasFactory, Notifiable;
 
+    protected $appends = [
+        'bio',
+    ];
+
     // Explicitly define the table name
     protected $table = 'alumnis'; 
 
@@ -42,5 +46,10 @@ class Alumni extends Authenticatable
     public function getAuthPassword()
     {
         return $this->password_hash;
+    }
+
+    public function getBioAttribute(): ?string
+    {
+        return $this->alumni_bio;
     }
 }

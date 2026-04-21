@@ -3,7 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\ImagesPost;
+use App\Models\DismissedNotification;
 use App\Models\Comment;
+use App\Models\Repost;
 use App\Models\Post;
 use App\Models\Reaction;
 use Illuminate\Http\Request;
@@ -11,6 +13,101 @@ use Illuminate\Support\Facades\DB;
 
 class PostController extends Controller
 {
+    private function buildNotificationActor(array $source): array
+    {
+        return [
+            'id' => $source['alumni']?->id,
+            'first_name' => $source['alumni']?->first_name,
+            'last_name' => $source['alumni']?->last_name,
+            'alumni_photo' => $source['alumni']?->alumni_photo,
+        ];
+    }
+
+    private function buildNotificationKey(string $type, int $id): string
+    {
+        return sprintf('%s-%d', $type, $id);
+    }
+
+    private function getDismissedNotificationKeys(int $alumniId)
+    {
+        return DismissedNotification::query()
+            ->where('alumni_id', $alumniId)
+            ->pluck('notification_key')
+            ->all();
+    }
+
+    private function buildPostFeedItem(Post $post): array
+    {
+        return [
+            'id' => $post->id,
+            'feed_type' => 'post',
+            'caption' => $post->caption,
+            'created_at' => $post->created_at,
+            'alumni' => [
+                'id' => $post->alumni?->id,
+                'first_name' => $post->alumni?->first_name,
+                'last_name' => $post->alumni?->last_name,
+                'alumni_photo' => $post->alumni?->alumni_photo,
+            ],
+            'comment_count' => $post->comments_count ?? 0,
+            'reaction_count' => $post->reactions_count ?? 0,
+            'repost_count' => $post->reposts_count ?? 0,
+            'my_reaction' => null,
+            'my_repost' => false,
+            'images' => $post->images->map(function (ImagesPost $image) {
+                return [
+                    'id' => $image->id,
+                    'image_path' => $image->image_path,
+                ];
+            })->values(),
+        ];
+    }
+
+    private function buildRepostFeedItem(Repost $repost): ?array
+    {
+        $originalPost = $repost->post;
+
+        if (!$originalPost) {
+            return null;
+        }
+
+        return [
+            'id' => $originalPost->id,
+            'feed_id' => sprintf('repost-%d', $repost->id),
+            'feed_type' => 'repost',
+            'caption' => $repost->caption,
+            'created_at' => $repost->created_at,
+            'alumni' => [
+                'id' => $repost->alumni?->id,
+                'first_name' => $repost->alumni?->first_name,
+                'last_name' => $repost->alumni?->last_name,
+                'alumni_photo' => $repost->alumni?->alumni_photo,
+            ],
+            'comment_count' => $originalPost->comments_count ?? 0,
+            'reaction_count' => $originalPost->reactions_count ?? 0,
+            'repost_count' => $originalPost->reposts_count ?? 0,
+            'my_reaction' => null,
+            'my_repost' => false,
+            'images' => $originalPost->images->map(function (ImagesPost $image) {
+                return [
+                    'id' => $image->id,
+                    'image_path' => $image->image_path,
+                ];
+            })->values(),
+            'original_post' => [
+                'id' => $originalPost->id,
+                'caption' => $originalPost->caption,
+                'created_at' => $originalPost->created_at,
+                'alumni' => [
+                    'id' => $originalPost->alumni?->id,
+                    'first_name' => $originalPost->alumni?->first_name,
+                    'last_name' => $originalPost->alumni?->last_name,
+                    'alumni_photo' => $originalPost->alumni?->alumni_photo,
+                ],
+            ],
+        ];
+    }
+
     private function resolveImageUrl(Request $request, string $imagePath): string
     {
         $trimmedPath = trim($imagePath);
@@ -53,59 +150,73 @@ class PostController extends Controller
             'alumni:id,first_name,last_name,alumni_photo',
             'images:id,post_id,image_path',
         ])
-            ->withCount(['reactions', 'comments'])
+            ->withCount(['reactions', 'comments', 'reposts'])
             ->where('moderation_status', 'approved')
             ->orderByDesc('created_at')
             ->limit(50)
             ->get()
-            ->map(function (Post $post) use ($currentAlumniId) {
-                return [
-                    'id' => $post->id,
-                    'caption' => $post->caption,
-                    'created_at' => $post->created_at,
-                    'alumni' => [
-                        'id' => $post->alumni?->id,
-                        'first_name' => $post->alumni?->first_name,
-                        'last_name' => $post->alumni?->last_name,
-                        'alumni_photo' => $post->alumni?->alumni_photo,
-                    ],
-                    'comment_count' => $post->comments_count ?? 0,
-                    'reaction_count' => $post->reactions_count ?? 0,
-                    'my_reaction' => null,
-                    'images' => $post->images->map(function (ImagesPost $image) {
-                        return [
-                            'id' => $image->id,
-                            'image_path' => $image->image_path,
-                        ];
-                    })->values(),
-                ];
-            });
+            ->map(fn (Post $post) => $this->buildPostFeedItem($post));
+
+        $reposts = Repost::with([
+            'alumni:id,first_name,last_name,alumni_photo',
+            'post.alumni:id,first_name,last_name,alumni_photo',
+            'post.images:id,post_id,image_path',
+            'post:id,alumni_id,caption,created_at',
+        ])
+            ->where('moderation_status', 'approved')
+            ->whereHas('post', function ($query) {
+                $query->where('moderation_status', 'approved');
+            })
+            ->orderByDesc('created_at')
+            ->limit(50)
+            ->get()
+            ->map(fn (Repost $repost) => $this->buildRepostFeedItem($repost))
+            ->filter()
+            ->values();
+
+        $feedItems = $posts
+            ->concat($reposts)
+            ->sortByDesc(function (array $item) {
+                return $item['created_at'];
+            })
+            ->take(50)
+            ->values();
 
         if ($currentAlumniId) {
             $currentReactionMap = Reaction::query()
-                ->whereIn('post_id', $posts->pluck('id'))
+                ->whereIn('post_id', $feedItems->pluck('id')->unique()->values())
                 ->where('alumni_id', $currentAlumniId)
                 ->pluck('reaction', 'post_id');
 
-            $posts = $posts->map(function (array $post) use ($currentReactionMap) {
-                $post['my_reaction'] = $currentReactionMap->get($post['id']);
+            $currentRepostPostIds = Repost::query()
+                ->whereIn('post_id', $feedItems->pluck('id')->unique()->values())
+                ->where('alumni_id', $currentAlumniId)
+                ->pluck('post_id')
+                ->map(function ($postId) {
+                    return (int) $postId;
+                })
+                ->all();
 
-                return $post;
+            $feedItems = $feedItems->map(function (array $item) use ($currentReactionMap, $currentRepostPostIds) {
+                $item['my_reaction'] = $currentReactionMap->get($item['id']);
+                $item['my_repost'] = in_array((int) $item['id'], $currentRepostPostIds, true);
+
+                return $item;
             });
         }
 
-        $posts = $posts->map(function (array $post) use ($request) {
-            $post['images'] = collect($post['images'])->map(function (array $image) use ($request) {
+        $feedItems = $feedItems->map(function (array $item) use ($request) {
+            $item['images'] = collect($item['images'])->map(function (array $image) use ($request) {
                 $image['image_url'] = $this->resolveImageUrl($request, $image['image_path']);
 
                 return $image;
             })->values();
 
-            return $post;
+            return $item;
         });
 
         return response()->json([
-            'posts' => $posts,
+            'posts' => $feedItems,
         ]);
     }
 
@@ -164,7 +275,9 @@ class PostController extends Controller
                 ],
                 'comment_count' => 0,
                 'reaction_count' => 0,
+                'repost_count' => 0,
                 'my_reaction' => null,
+                'my_repost' => false,
                 'images' => $images,
             ],
         ], 201);
@@ -239,8 +352,111 @@ class PostController extends Controller
                 'comment' => $comment->comment,
                 'created_at' => $comment->created_at,
                 'comment_count' => $commentCount,
+                'alumni' => [
+                    'id' => $request->user()->id,
+                    'first_name' => $request->user()->first_name,
+                    'last_name' => $request->user()->last_name,
+                    'alumni_photo' => $request->user()->alumni_photo,
+                ],
             ],
         ], 201);
+    }
+
+    public function repost(Request $request, Post $post)
+    {
+        $validated = $request->validate([
+            'caption' => 'nullable|string|max:10000',
+        ]);
+
+        $alumniId = $request->user()->id;
+        $caption = isset($validated['caption']) ? trim($validated['caption']) : null;
+
+        if ($caption === '') {
+            $caption = null;
+        }
+
+        $savedRepost = DB::transaction(function () use ($alumniId, $post, $caption) {
+            $existingRepost = Repost::query()
+                ->where('alumni_id', $alumniId)
+                ->where('post_id', $post->id)
+                ->first();
+
+            if ($existingRepost) {
+                $existingRepost->delete();
+
+                return null;
+            }
+
+            return Repost::create([
+                'alumni_id' => $alumniId,
+                'post_id' => $post->id,
+                'caption' => $caption,
+                'moderation_status' => 'approved',
+            ]);
+        });
+
+        $isReposting = (bool) $savedRepost;
+
+        $repostCount = Repost::query()
+            ->where('post_id', $post->id)
+            ->count();
+
+        $repostPayload = null;
+
+        if ($savedRepost) {
+            $savedRepost->load([
+                'alumni:id,first_name,last_name,alumni_photo',
+                'post.alumni:id,first_name,last_name,alumni_photo',
+                'post.images:id,post_id,image_path',
+            ]);
+
+            $repostPayload = [
+                'id' => $post->id,
+                'feed_id' => sprintf('repost-%d', $savedRepost->id),
+                'feed_type' => 'repost',
+                'caption' => $savedRepost->caption,
+                'created_at' => $savedRepost->created_at,
+                'alumni' => [
+                    'id' => $savedRepost->alumni?->id,
+                    'first_name' => $savedRepost->alumni?->first_name,
+                    'last_name' => $savedRepost->alumni?->last_name,
+                    'alumni_photo' => $savedRepost->alumni?->alumni_photo,
+                ],
+                'comment_count' => Comment::query()->where('post_id', $post->id)->count(),
+                'reaction_count' => Reaction::query()->where('post_id', $post->id)->count(),
+                'repost_count' => $repostCount,
+                'my_reaction' => Reaction::query()
+                    ->where('post_id', $post->id)
+                    ->where('alumni_id', $alumniId)
+                    ->value('reaction'),
+                'my_repost' => true,
+                'images' => $savedRepost->post?->images->map(function (ImagesPost $image) use ($request) {
+                    return [
+                        'id' => $image->id,
+                        'image_path' => $image->image_path,
+                        'image_url' => $this->resolveImageUrl($request, $image->image_path),
+                    ];
+                })->values() ?? [],
+                'original_post' => [
+                    'id' => $savedRepost->post?->id,
+                    'caption' => $savedRepost->post?->caption,
+                    'created_at' => $savedRepost->post?->created_at,
+                    'alumni' => [
+                        'id' => $savedRepost->post?->alumni?->id,
+                        'first_name' => $savedRepost->post?->alumni?->first_name,
+                        'last_name' => $savedRepost->post?->alumni?->last_name,
+                        'alumni_photo' => $savedRepost->post?->alumni?->alumni_photo,
+                    ],
+                ],
+            ];
+        }
+
+        return response()->json([
+            'message' => $isReposting ? 'Repost saved.' : 'Repost removed.',
+            'repost_count' => $repostCount,
+            'my_repost' => $isReposting,
+            'repost' => $repostPayload,
+        ]);
     }
 
     public function comments(Request $request, Post $post)
@@ -266,6 +482,299 @@ class PostController extends Controller
 
         return response()->json([
             'comments' => $comments,
+        ]);
+    }
+
+    public function notifications(Request $request)
+    {
+        $currentAlumniId = $request->user()?->id;
+
+        if (!$currentAlumniId) {
+            return response()->json([
+                'notifications' => [],
+            ]);
+        }
+
+        $ownedPostIds = Post::query()
+            ->where('alumni_id', $currentAlumniId)
+            ->pluck('id')
+            ->all();
+
+        if (empty($ownedPostIds)) {
+            return response()->json([
+                'notifications' => [],
+            ]);
+        }
+
+        $dismissedNotificationKeys = $this->getDismissedNotificationKeys($currentAlumniId);
+
+        $reactions = Reaction::with(['alumni:id,first_name,last_name,alumni_photo', 'post:id,caption,alumni_id,created_at'])
+            ->whereIn('post_id', $ownedPostIds)
+            ->where('alumni_id', '!=', $currentAlumniId)
+            ->whereHas('post', function ($query) {
+                $query->where('moderation_status', 'approved');
+            })
+            ->orderByDesc('created_at')
+            ->get()
+            ->map(function (Reaction $reaction) {
+                $post = $reaction->post;
+
+                if (!$post) {
+                    return null;
+                }
+
+                return [
+                    'id' => $this->buildNotificationKey('reaction', $reaction->id),
+                    'type' => 'reaction',
+                    'source_id' => $reaction->id,
+                    'actor' => [
+                        'id' => $reaction->alumni?->id,
+                        'first_name' => $reaction->alumni?->first_name,
+                        'last_name' => $reaction->alumni?->last_name,
+                        'alumni_photo' => $reaction->alumni?->alumni_photo,
+                    ],
+                    'post' => [
+                        'id' => $post->id,
+                        'caption' => $post->caption,
+                    ],
+                    'detail' => null,
+                    'created_at' => $reaction->created_at,
+                ];
+            });
+
+        $comments = Comment::with(['alumni:id,first_name,last_name,alumni_photo', 'post:id,caption,alumni_id,created_at'])
+            ->whereIn('post_id', $ownedPostIds)
+            ->where('alumni_id', '!=', $currentAlumniId)
+            ->where('moderation_status', 'approved')
+            ->whereHas('post', function ($query) {
+                $query->where('moderation_status', 'approved');
+            })
+            ->orderByDesc('created_at')
+            ->get()
+            ->map(function (Comment $comment) {
+                $post = $comment->post;
+
+                if (!$post) {
+                    return null;
+                }
+
+                return [
+                    'id' => $this->buildNotificationKey('comment', $comment->id),
+                    'type' => 'comment',
+                    'source_id' => $comment->id,
+                    'actor' => [
+                        'id' => $comment->alumni?->id,
+                        'first_name' => $comment->alumni?->first_name,
+                        'last_name' => $comment->alumni?->last_name,
+                        'alumni_photo' => $comment->alumni?->alumni_photo,
+                    ],
+                    'post' => [
+                        'id' => $post->id,
+                        'caption' => $post->caption,
+                    ],
+                    'detail' => $comment->comment,
+                    'created_at' => $comment->created_at,
+                ];
+            });
+
+        $reposts = Repost::with(['alumni:id,first_name,last_name,alumni_photo', 'post:id,caption,alumni_id,created_at'])
+            ->whereIn('post_id', $ownedPostIds)
+            ->where('alumni_id', '!=', $currentAlumniId)
+            ->where('moderation_status', 'approved')
+            ->whereHas('post', function ($query) {
+                $query->where('moderation_status', 'approved');
+            })
+            ->orderByDesc('created_at')
+            ->get()
+            ->map(function (Repost $repost) {
+                $post = $repost->post;
+
+                if (!$post) {
+                    return null;
+                }
+
+                return [
+                    'id' => $this->buildNotificationKey('repost', $repost->id),
+                    'type' => 'repost',
+                    'source_id' => $repost->id,
+                    'actor' => [
+                        'id' => $repost->alumni?->id,
+                        'first_name' => $repost->alumni?->first_name,
+                        'last_name' => $repost->alumni?->last_name,
+                        'alumni_photo' => $repost->alumni?->alumni_photo,
+                    ],
+                    'post' => [
+                        'id' => $post->id,
+                        'caption' => $post->caption,
+                    ],
+                    'detail' => null,
+                    'created_at' => $repost->created_at,
+                ];
+            });
+
+        $notifications = collect()
+            ->concat($reactions)
+            ->concat($comments)
+            ->concat($reposts)
+            ->filter()
+            ->reject(function (array $notification) use ($dismissedNotificationKeys) {
+                return in_array($notification['id'], $dismissedNotificationKeys, true);
+            })
+            ->sortByDesc('created_at')
+            ->values();
+
+        return response()->json([
+            'notifications' => $notifications,
+        ]);
+    }
+
+    public function dismissNotification(Request $request, string $notificationKey)
+    {
+        $currentAlumniId = $request->user()?->id;
+
+        if (!$currentAlumniId) {
+            return response()->json([
+                'message' => 'Unauthenticated.',
+            ], 401);
+        }
+
+        if (!preg_match('/^(reaction|comment|repost)-\d+$/', $notificationKey)) {
+            return response()->json([
+                'message' => 'Invalid notification key.',
+            ], 422);
+        }
+
+        DismissedNotification::updateOrCreate(
+            [
+                'alumni_id' => $currentAlumniId,
+                'notification_key' => $notificationKey,
+            ],
+            []
+        );
+
+        return response()->json([
+            'message' => 'Notification dismissed.',
+        ]);
+    }
+
+    public function myPosts(Request $request)
+    {
+        $currentAlumniId = $request->user()?->id;
+
+        if (!$currentAlumniId) {
+            return response()->json([
+                'posts' => [],
+            ]);
+        }
+
+        $posts = Post::with([
+            'alumni:id,first_name,last_name,alumni_photo',
+            'images:id,post_id,image_path',
+        ])
+            ->withCount(['reactions', 'comments', 'reposts'])
+            ->where('alumni_id', $currentAlumniId)
+            ->where('moderation_status', 'approved')
+            ->orderByDesc('created_at')
+            ->get()
+            ->map(function (Post $post) {
+                return [
+                    'id' => $post->id,
+                    'feed_id' => sprintf('post-%d', $post->id),
+                    'feed_type' => 'post',
+                    'caption' => $post->caption,
+                    'created_at' => $post->created_at,
+                    'alumni' => [
+                        'id' => $post->alumni?->id,
+                        'first_name' => $post->alumni?->first_name,
+                        'last_name' => $post->alumni?->last_name,
+                        'alumni_photo' => $post->alumni?->alumni_photo,
+                    ],
+                    'comment_count' => $post->comments_count ?? 0,
+                    'reaction_count' => $post->reactions_count ?? 0,
+                    'repost_count' => $post->reposts_count ?? 0,
+                    'images' => $post->images->map(function (ImagesPost $image) {
+                        return [
+                            'id' => $image->id,
+                            'image_path' => $image->image_path,
+                        ];
+                    })->values(),
+                ];
+            });
+
+        $reposts = Repost::with([
+            'alumni:id,first_name,last_name,alumni_photo',
+            'post.alumni:id,first_name,last_name,alumni_photo',
+            'post.images:id,post_id,image_path',
+        ])
+            ->where('alumni_id', $currentAlumniId)
+            ->where('moderation_status', 'approved')
+            ->whereHas('post', function ($query) {
+                $query->where('moderation_status', 'approved');
+            })
+            ->orderByDesc('created_at')
+            ->get()
+            ->map(function (Repost $repost) {
+                $originalPost = $repost->post;
+
+                if (!$originalPost) {
+                    return null;
+                }
+
+                return [
+                    'id' => $originalPost->id,
+                    'feed_id' => sprintf('repost-%d', $repost->id),
+                    'feed_type' => 'repost',
+                    'caption' => $repost->caption,
+                    'created_at' => $repost->created_at,
+                    'alumni' => [
+                        'id' => $repost->alumni?->id,
+                        'first_name' => $repost->alumni?->first_name,
+                        'last_name' => $repost->alumni?->last_name,
+                        'alumni_photo' => $repost->alumni?->alumni_photo,
+                    ],
+                    'comment_count' => $originalPost->comments()->count(),
+                    'reaction_count' => $originalPost->reactions()->count(),
+                    'repost_count' => $originalPost->reposts()->count(),
+                    'images' => $originalPost->images->map(function (ImagesPost $image) {
+                        return [
+                            'id' => $image->id,
+                            'image_path' => $image->image_path,
+                        ];
+                    })->values(),
+                    'original_post' => [
+                        'id' => $originalPost->id,
+                        'caption' => $originalPost->caption,
+                        'created_at' => $originalPost->created_at,
+                        'alumni' => [
+                            'id' => $originalPost->alumni?->id,
+                            'first_name' => $originalPost->alumni?->first_name,
+                            'last_name' => $originalPost->alumni?->last_name,
+                            'alumni_photo' => $originalPost->alumni?->alumni_photo,
+                        ],
+                    ],
+                ];
+            })
+            ->filter()
+            ->values();
+
+        $activityItems = $posts
+            ->concat($reposts)
+            ->sortByDesc(function (array $item) {
+                return $item['created_at'];
+            })
+            ->values()
+            ->map(function (array $item) use ($request) {
+                $item['images'] = collect($item['images'])->map(function (array $image) use ($request) {
+                    $image['image_url'] = $this->resolveImageUrl($request, $image['image_path']);
+
+                    return $image;
+                })->values();
+
+                return $item;
+            });
+
+        return response()->json([
+            'posts' => $activityItems,
         ]);
     }
 }

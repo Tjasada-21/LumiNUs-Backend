@@ -29,6 +29,11 @@ class Post extends Model
         return $this->hasMany(Reaction::class, 'post_id');
     }
 
+    public function reposts(): HasMany
+    {
+        return $this->hasMany(Repost::class, 'post_id');
+    }
+
     public function comments(): HasMany
     {
         return $this->hasMany(Comment::class, 'post_id');

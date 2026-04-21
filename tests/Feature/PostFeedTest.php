@@ -50,6 +50,8 @@ class PostFeedTest extends TestCase
         $response->assertJsonPath('posts.0.caption', 'Feed post');
         $response->assertJsonPath('posts.0.alumni.first_name', 'Jane');
         $response->assertJsonPath('posts.0.images.0.image_path', 'posts/post-image.jpg');
+        $response->assertJsonPath('posts.0.repost_count', 0);
+        $response->assertJsonPath('posts.0.my_repost', false);
         $this->assertStringContainsString('/storage/posts/post-image.jpg', $response->json('posts.0.images.0.image_url'));
     }
 }

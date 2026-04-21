@@ -18,14 +18,21 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     Route::get('/alumni/profile', [AlumniProfileController::class, 'show']);
+    Route::get('/alumni/profile/posts', [PostController::class, 'myPosts']);
+    Route::get('/alumni/search', [AlumniProfileController::class, 'search']);
+    Route::get('/alumni/{alumni}', [AlumniProfileController::class, 'view']);
+    Route::get('/alumni/{alumni}/posts', [AlumniProfileController::class, 'posts']);
     Route::put('/alumni/profile', [AlumniProfileController::class, 'update']);
     Route::post('/alumni/photo', [AlumniProfileController::class, 'uploadPhoto']);
     Route::post('/alumni/reset-password', [AuthController::class, 'resetAccountPassword']);
     Route::get('/perks', [PerkController::class, 'index']);
+    Route::get('/notifications', [PostController::class, 'notifications']);
+    Route::delete('/notifications/{notificationKey}', [PostController::class, 'dismissNotification']);
     Route::get('/posts', [PostController::class, 'index']);
     Route::post('/posts', [PostController::class, 'store']);
     Route::get('/posts/{post}/comments', [PostController::class, 'comments']);
     Route::post('/posts/{post}/reactions', [PostController::class, 'react']);
+    Route::post('/posts/{post}/reposts', [PostController::class, 'repost']);
     Route::post('/posts/{post}/comments', [PostController::class, 'comment']);
 
     // We will put things like creating posts, answering tracer studies,
