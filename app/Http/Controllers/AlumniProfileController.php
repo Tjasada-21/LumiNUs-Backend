@@ -7,9 +7,24 @@ use App\Models\Reaction;
 use App\Models\Repost;
 use App\Models\Post;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 class AlumniProfileController extends Controller
 {
+    private function resolveStorageUrl(Request $request, string $path): string
+    {
+        $normalizedPath = ltrim(trim($path), '/');
+
+        $publicBaseUrl = rtrim((string) config('filesystems.disks.s3.url', ''), '/');
+        $bucketName = trim((string) config('filesystems.disks.s3.bucket', ''), '/');
+
+        if ($publicBaseUrl !== '' && $bucketName !== '') {
+            return $publicBaseUrl . '/' . $bucketName . '/' . $normalizedPath;
+        }
+
+        return rtrim($request->getSchemeAndHttpHost(), '/') . '/' . $normalizedPath;
+    }
+
     private function alumniWithStats($alumni): array
     {
         $payload = $alumni->toArray();
@@ -179,13 +194,16 @@ class AlumniProfileController extends Controller
         ]);
 
         $file = $request->file('photo');
-        // store in public disk under alumni_photos
-        $path = $file->store('alumni_photos', 'public');
+        $path = Storage::disk('s3')->putFile('alumni_photos', $file);
 
-        // build public URL
-        $url = asset('storage/' . $path);
+        if (!$path) {
+            return response()->json([
+                'message' => 'Unable to store uploaded photo.',
+            ], 500);
+        }
 
-        // update alumni record
+        $url = $this->resolveStorageUrl($request, $path);
+
         $alumni->alumni_photo = $url;
         $alumni->save();
 
@@ -307,5 +325,30 @@ class AlumniProfileController extends Controller
         return response()->json([
             'posts' => $feedItems,
         ]);
+    }
+
+    public function uploadProfilePhoto(Request $request)
+    {
+        $request->validate([
+            'photo' => 'required|image|max:5120', 
+            'alumni_id' => 'required|exists:alumnis,id'
+        ]);
+
+        if ($request->hasFile('photo')) {
+            // Save to the 'alumni_photos' folder on the 'supabase' disk we set up
+            $path = $request->file('photo')->store('alumni_photos', 'supabase'); 
+
+            // Find the specific user and update their photo column
+            $alumni = Alumni::find($request->alumni_id);
+            $alumni->alumni_photo = $path; 
+            $alumni->save();
+
+            return response()->json([
+                'message' => 'Profile photo successfully updated!',
+                'path' => $path
+            ]);
+        }
+
+        return response()->json(['message' => 'No file provided'], 400);
     }
 }

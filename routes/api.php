@@ -34,6 +34,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/posts/{post}/reactions', [PostController::class, 'react']);
     Route::post('/posts/{post}/reposts', [PostController::class, 'repost']);
     Route::post('/posts/{post}/comments', [PostController::class, 'comment']);
+    Route::post('/upload-photo', [AlumniProfileController::class, 'uploadProfilePhoto']);
 
     // We will put things like creating posts, answering tracer studies,
     // and sending messages inside here later!
