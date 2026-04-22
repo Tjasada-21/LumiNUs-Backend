@@ -11,6 +11,8 @@ use Illuminate\Support\Facades\Storage;
 
 class AlumniProfileController extends Controller
 {
+    private const PHOTO_UPLOAD_COOLDOWN_SECONDS = 60;
+
     private function resolveStorageUrl(Request $request, string $path): string
     {
         $normalizedPath = ltrim(trim($path), '/');
@@ -23,6 +25,28 @@ class AlumniProfileController extends Controller
         }
 
         return rtrim($request->getSchemeAndHttpHost(), '/') . '/' . $normalizedPath;
+    }
+
+    private function photoUploadCooldownResponse(Alumni $alumni)
+    {
+        $updatedAt = $alumni->updated_at;
+
+        if (!$updatedAt) {
+            return null;
+        }
+
+        $elapsedSeconds = $updatedAt->diffInSeconds(now());
+
+        if ($elapsedSeconds >= self::PHOTO_UPLOAD_COOLDOWN_SECONDS) {
+            return null;
+        }
+
+        $retryAfter = self::PHOTO_UPLOAD_COOLDOWN_SECONDS - $elapsedSeconds;
+
+        return response()->json([
+            'message' => 'Please wait before changing your profile photo again.',
+            'retry_after' => $retryAfter,
+        ], 429);
     }
 
     private function extractStoragePath(?string $value): ?string
@@ -216,6 +240,10 @@ class AlumniProfileController extends Controller
     {
         $alumni = $request->user();
 
+        if ($cooldownResponse = $this->photoUploadCooldownResponse($alumni)) {
+            return $cooldownResponse;
+        }
+
         $validated = $request->validate([
             'photo' => 'required|image|max:5120', // max 5MB
         ]);
@@ -374,6 +402,10 @@ class AlumniProfileController extends Controller
 
             if (!$alumni) {
                 return response()->json(['message' => 'Alumni not found'], 404);
+            }
+
+            if ($cooldownResponse = $this->photoUploadCooldownResponse($alumni)) {
+                return $cooldownResponse;
             }
 
             $disk = Storage::disk('supabase');
