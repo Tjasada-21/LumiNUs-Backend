@@ -52,4 +52,41 @@ class Alumni extends Authenticatable
     {
         return $this->alumni_bio;
     }
+
+    public function getAlumniPhotoAttribute($value): ?string
+    {
+        $trimmedValue = trim((string) $value);
+
+        if ($trimmedValue === '') {
+            return $trimmedValue;
+        }
+
+        if (preg_match('/^https?:\/\//i', $trimmedValue)) {
+            $resolvedUrl = $trimmedValue;
+        } else {
+            $parsedPath = parse_url($trimmedValue, PHP_URL_PATH);
+            $normalizedPath = ltrim((string) ($parsedPath ?: $trimmedValue), '/');
+            $bucketName = trim((string) config('filesystems.disks.supabase.bucket', ''), '/');
+            $publicBaseUrl = rtrim((string) config('filesystems.disks.supabase.url', ''), '/');
+
+            if ($bucketName !== '' && str_starts_with($normalizedPath, $bucketName . '/')) {
+                $normalizedPath = substr($normalizedPath, strlen($bucketName) + 1);
+            }
+
+            if ($publicBaseUrl !== '' && $bucketName !== '') {
+                $resolvedUrl = $publicBaseUrl . '/' . $bucketName . '/' . ltrim($normalizedPath, '/');
+            } else {
+                $resolvedUrl = '/' . ltrim($normalizedPath, '/');
+            }
+        }
+
+        $version = $this->updated_at?->timestamp;
+        if (!$version) {
+            return $resolvedUrl;
+        }
+
+        $separator = str_contains($resolvedUrl, '?') ? '&' : '?';
+
+        return $resolvedUrl . $separator . 'v=' . $version;
+    }
 }

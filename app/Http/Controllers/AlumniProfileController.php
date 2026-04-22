@@ -25,6 +25,33 @@ class AlumniProfileController extends Controller
         return rtrim($request->getSchemeAndHttpHost(), '/') . '/' . $normalizedPath;
     }
 
+    private function extractStoragePath(?string $value): ?string
+    {
+        $trimmedValue = trim((string) $value);
+
+        if ($trimmedValue === '') {
+            return null;
+        }
+
+        $parsedPath = parse_url($trimmedValue, PHP_URL_PATH);
+        $path = ltrim((string) ($parsedPath ?: $trimmedValue), '/');
+        $bucketName = trim((string) config('filesystems.disks.s3.bucket', ''), '/');
+
+        if ($bucketName !== '' && str_starts_with($path, $bucketName . '/')) {
+            $path = substr($path, strlen($bucketName) + 1);
+        }
+
+        return $path !== '' ? $path : null;
+    }
+
+    private function buildAlumniPhotoPath(Alumni $alumni, string $extension): string
+    {
+        $normalizedExtension = strtolower(trim($extension));
+        $normalizedExtension = preg_replace('/[^a-z0-9]+/', '', $normalizedExtension) ?: 'jpg';
+
+        return sprintf('alumni_photos/%d/profile.%s', $alumni->id, $normalizedExtension);
+    }
+
     private function alumniWithStats($alumni): array
     {
         $payload = $alumni->toArray();
@@ -194,24 +221,32 @@ class AlumniProfileController extends Controller
         ]);
 
         $file = $request->file('photo');
-        $path = Storage::disk('s3')->putFile('alumni_photos', $file);
+        $disk = Storage::disk('supabase');
+        $path = $this->buildAlumniPhotoPath($alumni, $file->getClientOriginalExtension() ?: $file->extension() ?: 'jpg');
 
-        if (!$path) {
+        $oldPath = $this->extractStoragePath($alumni->alumni_photo);
+        if ($oldPath && $oldPath !== $path && $disk->exists($oldPath)) {
+            $disk->delete($oldPath);
+        }
+
+        $storedPath = $disk->putFileAs(dirname($path), $file, basename($path));
+
+        if (!$storedPath) {
             return response()->json([
                 'message' => 'Unable to store uploaded photo.',
             ], 500);
         }
 
-        $url = $this->resolveStorageUrl($request, $path);
-
-        $alumni->alumni_photo = $url;
+        $alumni->alumni_photo = $storedPath;
+        $alumni->updated_at = now();
         $alumni->save();
 
         $freshAlumni = $alumni->fresh();
 
         return response()->json([
             'message' => 'Photo uploaded',
-            'url' => $url,
+            'url' => $alumni->alumni_photo,
+            'path' => $storedPath,
             'alumni' => $this->alumniWithStats($freshAlumni),
         ]);
     }
@@ -335,17 +370,39 @@ class AlumniProfileController extends Controller
         ]);
 
         if ($request->hasFile('photo')) {
-            // Save to the 'alumni_photos' folder on the 'supabase' disk we set up
-            $path = $request->file('photo')->store('alumni_photos', 'supabase'); 
-
-            // Find the specific user and update their photo column
             $alumni = Alumni::find($request->alumni_id);
-            $alumni->alumni_photo = $path; 
+
+            if (!$alumni) {
+                return response()->json(['message' => 'Alumni not found'], 404);
+            }
+
+            $disk = Storage::disk('supabase');
+            $file = $request->file('photo');
+            $path = $this->buildAlumniPhotoPath($alumni, $file->getClientOriginalExtension() ?: $file->extension() ?: 'jpg');
+
+            $oldPath = $this->extractStoragePath($alumni->alumni_photo);
+            if ($oldPath && $oldPath !== $path && $disk->exists($oldPath)) {
+                $disk->delete($oldPath);
+            }
+
+            $storedPath = $disk->putFileAs(dirname($path), $file, basename($path));
+
+            if (!$storedPath) {
+                return response()->json(['message' => 'Unable to store uploaded photo.'], 500);
+            }
+
+            if ($oldPath && $oldPath !== $path && $disk->exists($oldPath)) {
+                $disk->delete($oldPath);
+            }
+
+            $alumni->alumni_photo = $storedPath; 
+            $alumni->updated_at = now();
             $alumni->save();
 
             return response()->json([
                 'message' => 'Profile photo successfully updated!',
-                'path' => $path
+                'path' => $storedPath,
+                'url' => $alumni->alumni_photo
             ]);
         }
 
