@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AlumniProfileController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\EventController;
 use App\Http\Controllers\PostController;
 use App\Http\Controllers\PerkController;
 use Illuminate\Http\Request;
@@ -22,6 +23,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/alumni/search', [AlumniProfileController::class, 'search']);
     Route::get('/alumni/{alumni}', [AlumniProfileController::class, 'view']);
     Route::get('/alumni/{alumni}/posts', [AlumniProfileController::class, 'posts']);
+    Route::get('/events', [EventController::class, 'index']);
     Route::put('/alumni/profile', [AlumniProfileController::class, 'update']);
     Route::post('/alumni/photo', [AlumniProfileController::class, 'uploadPhoto']);
     Route::post('/alumni/reset-password', [AuthController::class, 'resetAccountPassword']);

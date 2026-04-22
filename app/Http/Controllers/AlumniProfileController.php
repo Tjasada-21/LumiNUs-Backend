@@ -44,7 +44,7 @@ class AlumniProfileController extends Controller
         $retryAfter = self::PHOTO_UPLOAD_COOLDOWN_SECONDS - $elapsedSeconds;
 
         return response()->json([
-            'message' => 'Please wait before changing your profile photo again.',
+            'message' => 'Too many attempts. Please try again later.',
             'retry_after' => $retryAfter,
         ], 429);
     }
