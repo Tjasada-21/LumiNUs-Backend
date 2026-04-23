@@ -23,6 +23,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/alumni/search', [AlumniProfileController::class, 'search']);
     Route::get('/alumni/{alumni}', [AlumniProfileController::class, 'view']);
     Route::get('/alumni/{alumni}/posts', [AlumniProfileController::class, 'posts']);
+    Route::post('/alumni/{alumni}/follow', [AlumniProfileController::class, 'follow']);
+    Route::post('/followers/{followRequestId}/accept', [AlumniProfileController::class, 'acceptFollowRequest']);
+    Route::delete('/followers/{followRequestId}', [AlumniProfileController::class, 'declineFollowRequest']);
+    Route::get('/contacts', [AlumniProfileController::class, 'contacts']);
     Route::get('/events', [EventController::class, 'index']);
     Route::put('/alumni/profile', [AlumniProfileController::class, 'update']);
     Route::post('/alumni/photo', [AlumniProfileController::class, 'uploadPhoto']);

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\ImagesPost;
 use App\Models\DismissedNotification;
 use App\Models\Comment;
+use App\Models\Follower;
 use App\Models\Repost;
 use App\Models\Post;
 use App\Models\Reaction;
@@ -495,120 +496,151 @@ class PostController extends Controller
             ]);
         }
 
+        $dismissedNotificationKeys = $this->getDismissedNotificationKeys($currentAlumniId);
+
         $ownedPostIds = Post::query()
             ->where('alumni_id', $currentAlumniId)
             ->pluck('id')
             ->all();
 
-        if (empty($ownedPostIds)) {
-            return response()->json([
-                'notifications' => [],
-            ]);
+        $reactions = collect();
+        $comments = collect();
+        $reposts = collect();
+
+        if (!empty($ownedPostIds)) {
+            $reactions = Reaction::with(['alumni:id,first_name,last_name,alumni_photo', 'post:id,caption,alumni_id,created_at'])
+                ->whereIn('post_id', $ownedPostIds)
+                ->where('alumni_id', '!=', $currentAlumniId)
+                ->whereHas('post', function ($query) {
+                    $query->where('moderation_status', 'approved');
+                })
+                ->orderByDesc('created_at')
+                ->get()
+                ->map(function (Reaction $reaction) {
+                    $post = $reaction->post;
+
+                    if (!$post) {
+                        return null;
+                    }
+
+                    return [
+                        'id' => $this->buildNotificationKey('reaction', $reaction->id),
+                        'type' => 'reaction',
+                        'source_id' => $reaction->id,
+                        'actor' => [
+                            'id' => $reaction->alumni?->id,
+                            'first_name' => $reaction->alumni?->first_name,
+                            'last_name' => $reaction->alumni?->last_name,
+                            'alumni_photo' => $reaction->alumni?->alumni_photo,
+                        ],
+                        'post' => [
+                            'id' => $post->id,
+                            'caption' => $post->caption,
+                        ],
+                        'detail' => null,
+                        'created_at' => $reaction->created_at,
+                    ];
+                });
+
+            $comments = Comment::with(['alumni:id,first_name,last_name,alumni_photo', 'post:id,caption,alumni_id,created_at'])
+                ->whereIn('post_id', $ownedPostIds)
+                ->where('alumni_id', '!=', $currentAlumniId)
+                ->where('moderation_status', 'approved')
+                ->whereHas('post', function ($query) {
+                    $query->where('moderation_status', 'approved');
+                })
+                ->orderByDesc('created_at')
+                ->get()
+                ->map(function (Comment $comment) {
+                    $post = $comment->post;
+
+                    if (!$post) {
+                        return null;
+                    }
+
+                    return [
+                        'id' => $this->buildNotificationKey('comment', $comment->id),
+                        'type' => 'comment',
+                        'source_id' => $comment->id,
+                        'actor' => [
+                            'id' => $comment->alumni?->id,
+                            'first_name' => $comment->alumni?->first_name,
+                            'last_name' => $comment->alumni?->last_name,
+                            'alumni_photo' => $comment->alumni?->alumni_photo,
+                        ],
+                        'post' => [
+                            'id' => $post->id,
+                            'caption' => $post->caption,
+                        ],
+                        'detail' => $comment->comment,
+                        'created_at' => $comment->created_at,
+                    ];
+                });
+
+            $reposts = Repost::with(['alumni:id,first_name,last_name,alumni_photo', 'post:id,caption,alumni_id,created_at'])
+                ->whereIn('post_id', $ownedPostIds)
+                ->where('alumni_id', '!=', $currentAlumniId)
+                ->where('moderation_status', 'approved')
+                ->whereHas('post', function ($query) {
+                    $query->where('moderation_status', 'approved');
+                })
+                ->orderByDesc('created_at')
+                ->get()
+                ->map(function (Repost $repost) {
+                    $post = $repost->post;
+
+                    if (!$post) {
+                        return null;
+                    }
+
+                    return [
+                        'id' => $this->buildNotificationKey('repost', $repost->id),
+                        'type' => 'repost',
+                        'source_id' => $repost->id,
+                        'actor' => [
+                            'id' => $repost->alumni?->id,
+                            'first_name' => $repost->alumni?->first_name,
+                            'last_name' => $repost->alumni?->last_name,
+                            'alumni_photo' => $repost->alumni?->alumni_photo,
+                        ],
+                        'post' => [
+                            'id' => $post->id,
+                            'caption' => $post->caption,
+                        ],
+                        'detail' => null,
+                        'created_at' => $repost->created_at,
+                    ];
+                });
         }
 
-        $dismissedNotificationKeys = $this->getDismissedNotificationKeys($currentAlumniId);
-
-        $reactions = Reaction::with(['alumni:id,first_name,last_name,alumni_photo', 'post:id,caption,alumni_id,created_at'])
-            ->whereIn('post_id', $ownedPostIds)
-            ->where('alumni_id', '!=', $currentAlumniId)
-            ->whereHas('post', function ($query) {
-                $query->where('moderation_status', 'approved');
-            })
-            ->orderByDesc('created_at')
+        $followNotifications = DB::table('followers')
+            ->join('alumnis', 'followers.follower_alumni_id', '=', 'alumnis.id')
+            ->where('followers.followed_alumni_id', $currentAlumniId)
+            ->where('followers.status', Follower::STATUS_PENDING)
+            ->orderByDesc('followers.created_at')
+            ->select([
+                'followers.id as source_id',
+                'followers.created_at as created_at',
+                'alumnis.id as actor_id',
+                'alumnis.first_name',
+                'alumnis.last_name',
+                'alumnis.alumni_photo',
+            ])
             ->get()
-            ->map(function (Reaction $reaction) {
-                $post = $reaction->post;
-
-                if (!$post) {
-                    return null;
-                }
-
+            ->map(function ($follow) {
                 return [
-                    'id' => $this->buildNotificationKey('reaction', $reaction->id),
-                    'type' => 'reaction',
-                    'source_id' => $reaction->id,
+                    'id' => $this->buildNotificationKey('follow', (int) $follow->source_id),
+                    'type' => 'follow',
+                    'source_id' => (int) $follow->source_id,
                     'actor' => [
-                        'id' => $reaction->alumni?->id,
-                        'first_name' => $reaction->alumni?->first_name,
-                        'last_name' => $reaction->alumni?->last_name,
-                        'alumni_photo' => $reaction->alumni?->alumni_photo,
+                        'id' => (int) $follow->actor_id,
+                        'first_name' => $follow->first_name,
+                        'last_name' => $follow->last_name,
+                        'alumni_photo' => $follow->alumni_photo,
                     ],
-                    'post' => [
-                        'id' => $post->id,
-                        'caption' => $post->caption,
-                    ],
+                    'post' => null,
                     'detail' => null,
-                    'created_at' => $reaction->created_at,
-                ];
-            });
-
-        $comments = Comment::with(['alumni:id,first_name,last_name,alumni_photo', 'post:id,caption,alumni_id,created_at'])
-            ->whereIn('post_id', $ownedPostIds)
-            ->where('alumni_id', '!=', $currentAlumniId)
-            ->where('moderation_status', 'approved')
-            ->whereHas('post', function ($query) {
-                $query->where('moderation_status', 'approved');
-            })
-            ->orderByDesc('created_at')
-            ->get()
-            ->map(function (Comment $comment) {
-                $post = $comment->post;
-
-                if (!$post) {
-                    return null;
-                }
-
-                return [
-                    'id' => $this->buildNotificationKey('comment', $comment->id),
-                    'type' => 'comment',
-                    'source_id' => $comment->id,
-                    'actor' => [
-                        'id' => $comment->alumni?->id,
-                        'first_name' => $comment->alumni?->first_name,
-                        'last_name' => $comment->alumni?->last_name,
-                        'alumni_photo' => $comment->alumni?->alumni_photo,
-                    ],
-                    'post' => [
-                        'id' => $post->id,
-                        'caption' => $post->caption,
-                    ],
-                    'detail' => $comment->comment,
-                    'created_at' => $comment->created_at,
-                ];
-            });
-
-        $reposts = Repost::with(['alumni:id,first_name,last_name,alumni_photo', 'post:id,caption,alumni_id,created_at'])
-            ->whereIn('post_id', $ownedPostIds)
-            ->where('alumni_id', '!=', $currentAlumniId)
-            ->where('moderation_status', 'approved')
-            ->whereHas('post', function ($query) {
-                $query->where('moderation_status', 'approved');
-            })
-            ->orderByDesc('created_at')
-            ->get()
-            ->map(function (Repost $repost) {
-                $post = $repost->post;
-
-                if (!$post) {
-                    return null;
-                }
-
-                return [
-                    'id' => $this->buildNotificationKey('repost', $repost->id),
-                    'type' => 'repost',
-                    'source_id' => $repost->id,
-                    'actor' => [
-                        'id' => $repost->alumni?->id,
-                        'first_name' => $repost->alumni?->first_name,
-                        'last_name' => $repost->alumni?->last_name,
-                        'alumni_photo' => $repost->alumni?->alumni_photo,
-                    ],
-                    'post' => [
-                        'id' => $post->id,
-                        'caption' => $post->caption,
-                    ],
-                    'detail' => null,
-                    'created_at' => $repost->created_at,
+                    'created_at' => $follow->created_at,
                 ];
             });
 
@@ -616,6 +648,7 @@ class PostController extends Controller
             ->concat($reactions)
             ->concat($comments)
             ->concat($reposts)
+            ->concat($followNotifications)
             ->filter()
             ->reject(function (array $notification) use ($dismissedNotificationKeys) {
                 return in_array($notification['id'], $dismissedNotificationKeys, true);
@@ -638,7 +671,7 @@ class PostController extends Controller
             ], 401);
         }
 
-        if (!preg_match('/^(reaction|comment|repost)-\d+$/', $notificationKey)) {
+        if (!preg_match('/^(reaction|comment|repost|follow)-\d+$/', $notificationKey)) {
             return response()->json([
                 'message' => 'Invalid notification key.',
             ], 422);

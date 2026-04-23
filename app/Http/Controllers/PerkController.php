@@ -8,6 +8,8 @@ use Illuminate\Support\Facades\Schema;
 
 class PerkController extends Controller
 {
+    private const PERK_STATUS_ACTIVE = 1;
+
     private function resolveImageUrl(Request $request, ?string $imagePath): string
     {
         $trimmedPath = trim((string) $imagePath);
@@ -55,7 +57,7 @@ class PerkController extends Controller
 
         $perks = DB::table('perks')
             ->where(function ($query) {
-                $query->whereNull('status')->orWhere('status', 'active');
+                $query->whereNull('status')->orWhere('status', self::PERK_STATUS_ACTIVE);
             })
             ->orderByDesc('created_at')
             ->get();
@@ -86,7 +88,7 @@ class PerkController extends Controller
                 'title' => $perk->title,
                 'description' => $perk->description,
                 'valid_until' => $perk->valid_until,
-                'status' => $perk->status ?? 'active',
+                'status' => (int) ($perk->status ?? self::PERK_STATUS_ACTIVE),
                 'images' => $perksImages,
             ];
         })->values();

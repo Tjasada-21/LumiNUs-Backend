@@ -4,14 +4,45 @@ namespace App\Http\Controllers;
 
 use App\Models\Alumni;
 use App\Models\Reaction;
+use App\Models\Follower;
 use App\Models\Repost;
 use App\Models\Post;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
 class AlumniProfileController extends Controller
 {
     private const PHOTO_UPLOAD_COOLDOWN_SECONDS = 60;
+    private const FOLLOW_STATUS_PENDING = Follower::STATUS_PENDING;
+    private const FOLLOW_STATUS_CONNECTED = Follower::STATUS_CONNECTED;
+
+    private function resolveConnectionStatus(Alumni $alumni, ?int $viewerId): string
+    {
+        if (!$viewerId || $viewerId === $alumni->id) {
+            return 'none';
+        }
+
+        $outgoingStatus = DB::table('followers')
+            ->where('follower_alumni_id', $viewerId)
+            ->where('followed_alumni_id', $alumni->id)
+            ->value('status');
+
+        if ($outgoingStatus !== null) {
+            return (int) $outgoingStatus === self::FOLLOW_STATUS_CONNECTED ? 'connected' : 'pending';
+        }
+
+        $incomingStatus = DB::table('followers')
+            ->where('follower_alumni_id', $alumni->id)
+            ->where('followed_alumni_id', $viewerId)
+            ->value('status');
+
+        if ($incomingStatus !== null) {
+            return (int) $incomingStatus === self::FOLLOW_STATUS_CONNECTED ? 'connected' : 'pending';
+        }
+
+        return 'none';
+    }
 
     private function resolveStorageUrl(Request $request, string $path): string
     {
@@ -76,13 +107,21 @@ class AlumniProfileController extends Controller
         return sprintf('alumni_photos/%d/profile.%s', $alumni->id, $normalizedExtension);
     }
 
-    private function alumniWithStats($alumni): array
+    private function alumniWithStats($alumni, ?int $viewerId = null): array
     {
         $payload = $alumni->toArray();
         $payload['posts_count'] = Post::query()
             ->where('alumni_id', $alumni->id)
             ->where('moderation_status', 'approved')
             ->count();
+        $payload['connections_count'] = DB::table('followers')
+            ->where(function ($query) use ($alumni) {
+                $query->where('follower_alumni_id', $alumni->id)
+                    ->orWhere('followed_alumni_id', $alumni->id);
+            })
+            ->where('status', Follower::STATUS_CONNECTED)
+            ->count();
+        $payload['connection_status'] = $this->resolveConnectionStatus($alumni, $viewerId);
 
         return $payload;
     }
@@ -199,14 +238,184 @@ class AlumniProfileController extends Controller
         $alumni = $request->user();
 
         return response()->json([
-            'alumni' => $this->alumniWithStats($alumni),
+            'alumni' => $this->alumniWithStats($alumni, $alumni?->id),
         ]);
     }
 
-    public function view(Alumni $alumni)
+    public function view(Request $request, Alumni $alumni)
     {
+        $viewerId = $request->user()?->id;
+
         return response()->json([
-            'alumni' => $this->alumniWithStats($alumni),
+            'alumni' => $this->alumniWithStats($alumni, $viewerId),
+        ]);
+    }
+
+    public function follow(Request $request, Alumni $alumni)
+    {
+        $follower = $request->user();
+
+        if (!$follower) {
+            return response()->json([
+                'message' => 'No active session found.',
+            ], 401);
+        }
+
+        if ($follower->id === $alumni->id) {
+            return response()->json([
+                'message' => 'You cannot follow your own profile.',
+            ], 422);
+        }
+
+        $existingFollow = DB::table('followers')
+            ->where('follower_alumni_id', $follower->id)
+            ->where('followed_alumni_id', $alumni->id)
+            ->first();
+
+        if ($existingFollow) {
+            return response()->json([
+                'message' => (int) $existingFollow->status === self::FOLLOW_STATUS_CONNECTED
+                    ? 'You are already connected.'
+                    : 'A follow request is already pending.',
+                'followed' => false,
+            ]);
+        }
+
+        $inserted = DB::table('followers')->insert([
+            'follower_alumni_id' => $follower->id,
+            'followed_alumni_id' => $alumni->id,
+            'status' => self::FOLLOW_STATUS_PENDING,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return response()->json([
+            'message' => $inserted ? 'Follow request sent.' : 'Unable to send follow request.',
+            'followed' => (bool) $inserted,
+        ]);
+    }
+
+    public function acceptFollowRequest(Request $request, int $followRequestId)
+    {
+        $currentAlumniId = $request->user()?->id;
+
+        if (!$currentAlumniId) {
+            return response()->json([
+                'message' => 'Unauthenticated.',
+            ], 401);
+        }
+
+        $followRequest = DB::table('followers')
+            ->where('id', $followRequestId)
+            ->where('followed_alumni_id', $currentAlumniId)
+            ->first();
+
+        if (!$followRequest) {
+            return response()->json([
+                'message' => 'Follow request not found.',
+            ], 404);
+        }
+
+        if ((int) $followRequest->status === self::FOLLOW_STATUS_CONNECTED) {
+            return response()->json([
+                'message' => 'Follow request is already accepted.',
+            ]);
+        }
+
+        DB::table('followers')
+            ->where('id', $followRequestId)
+            ->update([
+                'status' => self::FOLLOW_STATUS_CONNECTED,
+                'updated_at' => now(),
+            ]);
+
+        return response()->json([
+            'message' => 'Follow request accepted.',
+        ]);
+    }
+
+    public function declineFollowRequest(Request $request, int $followRequestId)
+    {
+        $currentAlumniId = $request->user()?->id;
+
+        if (!$currentAlumniId) {
+            return response()->json([
+                'message' => 'Unauthenticated.',
+            ], 401);
+        }
+
+        $deleted = DB::table('followers')
+            ->where('id', $followRequestId)
+            ->where('followed_alumni_id', $currentAlumniId)
+            ->delete();
+
+        if (!$deleted) {
+            return response()->json([
+                'message' => 'Follow request not found.',
+            ], 404);
+        }
+
+        return response()->json([
+            'message' => 'Follow request deleted.',
+        ]);
+    }
+
+    public function contacts(Request $request)
+    {
+        $currentAlumniId = $request->user()?->id;
+
+        if (!$currentAlumniId) {
+            return response()->json([
+                'contacts' => [],
+            ]);
+        }
+
+        $contacts = DB::table('followers')
+            ->join('alumnis', function ($join) use ($currentAlumniId) {
+                $join->on('followers.follower_alumni_id', '=', 'alumnis.id')
+                    ->where('followers.followed_alumni_id', '=', $currentAlumniId)
+                    ->where('followers.status', '=', Follower::STATUS_CONNECTED);
+            })
+            ->select([
+                'followers.id as connection_id',
+                'alumnis.id as id',
+                'alumnis.first_name',
+                'alumnis.last_name',
+                'alumnis.alumni_photo',
+                'followers.created_at',
+            ])
+            ->union(
+                DB::table('followers')
+                    ->join('alumnis', function ($join) use ($currentAlumniId) {
+                        $join->on('followers.followed_alumni_id', '=', 'alumnis.id')
+                            ->where('followers.follower_alumni_id', '=', $currentAlumniId)
+                            ->where('followers.status', '=', Follower::STATUS_CONNECTED);
+                    })
+                    ->select([
+                        'followers.id as connection_id',
+                        'alumnis.id as id',
+                        'alumnis.first_name',
+                        'alumnis.last_name',
+                        'alumnis.alumni_photo',
+                        'followers.created_at',
+                    ])
+            )
+            ->orderByDesc('created_at')
+            ->get()
+            ->map(function ($contact) {
+                return [
+                    'id' => (int) $contact->id,
+                    'connection_id' => (int) $contact->connection_id,
+                    'first_name' => $contact->first_name,
+                    'last_name' => $contact->last_name,
+                    'alumni_photo' => $contact->alumni_photo,
+                    'created_at' => $contact->created_at,
+                ];
+            })
+            ->values();
+
+        return response()->json([
+            'contacts' => $contacts,
         ]);
     }
 
