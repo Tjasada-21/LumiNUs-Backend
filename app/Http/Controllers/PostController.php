@@ -331,16 +331,39 @@ class PostController extends Controller
     {
         $validated = $request->validate([
             'comment' => 'required|string|max:10000',
+            'parent_id' => 'nullable|integer|exists:comments,id',
         ]);
 
-        $comment = DB::transaction(function () use ($request, $post, $validated) {
+        $parentComment = null;
+
+        if (!empty($validated['parent_id'])) {
+            $parentComment = Comment::query()
+                ->where('id', $validated['parent_id'])
+                ->where('post_id', $post->id)
+                ->where('moderation_status', 'approved')
+                ->first();
+
+            if (!$parentComment) {
+                return response()->json([
+                    'message' => 'Reply target is not available.',
+                ], 422);
+            }
+        }
+
+        $comment = DB::transaction(function () use ($request, $post, $validated, $parentComment) {
             return Comment::create([
                 'alumni_id' => $request->user()->id,
                 'post_id' => $post->id,
+                'parent_id' => $parentComment?->id,
                 'comment' => trim($validated['comment']),
                 'moderation_status' => 'approved',
             ]);
         });
+
+        $comment->load([
+            'alumni:id,first_name,last_name,alumni_photo',
+            'parentComment.alumni:id,first_name,last_name,alumni_photo',
+        ]);
 
         $commentCount = Comment::query()
             ->where('post_id', $post->id)
@@ -351,6 +374,17 @@ class PostController extends Controller
             'comment' => [
                 'id' => $comment->id,
                 'comment' => $comment->comment,
+                'parent_id' => $comment->parent_id,
+                'parent_comment' => $comment->parentComment ? [
+                    'id' => $comment->parentComment->id,
+                    'comment' => $comment->parentComment->comment,
+                    'alumni' => [
+                        'id' => $comment->parentComment?->alumni?->id,
+                        'first_name' => $comment->parentComment?->alumni?->first_name,
+                        'last_name' => $comment->parentComment?->alumni?->last_name,
+                        'alumni_photo' => $comment->parentComment?->alumni?->alumni_photo,
+                    ],
+                ] : null,
                 'created_at' => $comment->created_at,
                 'comment_count' => $commentCount,
                 'alumni' => [
@@ -462,7 +496,7 @@ class PostController extends Controller
 
     public function comments(Request $request, Post $post)
     {
-        $comments = Comment::with(['alumni:id,first_name,last_name,alumni_photo'])
+        $comments = Comment::with(['alumni:id,first_name,last_name,alumni_photo', 'parentComment.alumni:id,first_name,last_name,alumni_photo'])
             ->where('post_id', $post->id)
             ->where('moderation_status', 'approved')
             ->orderBy('created_at')
@@ -471,6 +505,17 @@ class PostController extends Controller
                 return [
                     'id' => $comment->id,
                     'comment' => $comment->comment,
+                    'parent_id' => $comment->parent_id,
+                    'parent_comment' => $comment->parentComment ? [
+                        'id' => $comment->parentComment->id,
+                        'comment' => $comment->parentComment->comment,
+                        'alumni' => [
+                            'id' => $comment->parentComment?->alumni?->id,
+                            'first_name' => $comment->parentComment?->alumni?->first_name,
+                            'last_name' => $comment->parentComment?->alumni?->last_name,
+                            'alumni_photo' => $comment->parentComment?->alumni?->alumni_photo,
+                        ],
+                    ] : null,
                     'created_at' => $comment->created_at,
                     'alumni' => [
                         'id' => $comment->alumni?->id,
