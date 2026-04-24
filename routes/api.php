@@ -39,6 +39,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/posts', [PostController::class, 'store']);
     Route::get('/event-registrations', [EventRegistrationController::class, 'index']);
     Route::post('/events/{event}/registrations', [EventRegistrationController::class, 'store']);
+    Route::delete('/events/{event}/registrations', [EventRegistrationController::class, 'destroy']);
     Route::get('/posts/{post}/comments', [PostController::class, 'comments']);
     Route::post('/posts/{post}/reactions', [PostController::class, 'react']);
     Route::post('/posts/{post}/reposts', [PostController::class, 'repost']);
