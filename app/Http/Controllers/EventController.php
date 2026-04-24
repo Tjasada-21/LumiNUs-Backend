@@ -66,6 +66,8 @@ class EventController extends Controller
                 'id' => $event->venue?->id,
                 'name' => $event->venue?->name,
                 'address' => $event->venue?->address,
+                'latitude' => $event->venue?->latitude,
+                'longitude' => $event->venue?->longitude,
             ],
             'images' => $images,
             'cover_image_url' => $images->first()['image_url'] ?? null,
@@ -75,7 +77,7 @@ class EventController extends Controller
     public function index(Request $request)
     {
         $events = Event::with([
-            'venue:id,name,address',
+            'venue:id,name,address,latitude,longitude',
             'images:id,event_id,image_path,updated_at',
         ])
             ->whereDate('end_date', '>=', now()->toDateString())

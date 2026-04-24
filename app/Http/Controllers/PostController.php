@@ -109,6 +109,37 @@ class PostController extends Controller
         ];
     }
 
+    private function buildAnnouncementFeedItem(object $announcement, array $images): array
+    {
+        return [
+            'id' => $announcement->id,
+            'feed_id' => sprintf('announcement-%d', $announcement->id),
+            'feed_type' => 'announcement',
+            'caption' => $announcement->announcement_description,
+            'announcement_title' => $announcement->announcement_title,
+            'announcement_description' => $announcement->announcement_description,
+            'created_at' => $announcement->date_posted,
+            'author' => [
+                'id' => $announcement->admin_id,
+                'first_name' => $announcement->admin_first_name,
+                'middle_name' => $announcement->admin_middle_name,
+                'last_name' => $announcement->admin_last_name,
+                'alumni_photo' => $announcement->admin_photo,
+            ],
+            'comment_count' => 0,
+            'reaction_count' => 0,
+            'repost_count' => 0,
+            'my_reaction' => null,
+            'my_repost' => false,
+            'images' => collect($images[$announcement->id] ?? [])->map(function ($image) {
+                return [
+                    'id' => $image->id,
+                    'image_path' => $image->image_path,
+                ];
+            })->values(),
+        ];
+    }
+
     private function resolveImageUrl(Request $request, string $imagePath): string
     {
         $trimmedPath = trim($imagePath);
@@ -175,8 +206,35 @@ class PostController extends Controller
             ->filter()
             ->values();
 
+        $announcements = DB::table('announcements as announcement')
+            ->leftJoin('admins as admin', 'admin.id', '=', 'announcement.admin_id')
+            ->orderByDesc('announcement.date_posted')
+            ->limit(50)
+            ->get([
+                'announcement.id',
+                'announcement.admin_id',
+                'announcement.title as announcement_title',
+                'announcement.announcement_description',
+                'announcement.date_posted',
+                'admin.admin_first_name',
+                'admin.admin_middle_name',
+                'admin.admin_last_name',
+                'admin.photo as admin_photo',
+            ]);
+
+        $announcementImages = DB::table('images_announcements')
+            ->whereIn('announcement_id', $announcements->pluck('id')->all())
+            ->orderBy('id')
+            ->get()
+            ->groupBy('announcement_id');
+
+        $announcementFeedItems = $announcements
+            ->map(fn (object $announcement) => $this->buildAnnouncementFeedItem($announcement, $announcementImages->all()))
+            ->values();
+
         $feedItems = $posts
             ->concat($reposts)
+            ->concat($announcementFeedItems)
             ->sortByDesc(function (array $item) {
                 return $item['created_at'];
             })
@@ -184,13 +242,21 @@ class PostController extends Controller
             ->values();
 
         if ($currentAlumniId) {
+            $reactableFeedItemIds = $feedItems
+                ->filter(function (array $item) {
+                    return ($item['feed_type'] ?? 'post') !== 'announcement';
+                })
+                ->pluck('id')
+                ->unique()
+                ->values();
+
             $currentReactionMap = Reaction::query()
-                ->whereIn('post_id', $feedItems->pluck('id')->unique()->values())
+                ->whereIn('post_id', $reactableFeedItemIds)
                 ->where('alumni_id', $currentAlumniId)
                 ->pluck('reaction', 'post_id');
 
             $currentRepostPostIds = Repost::query()
-                ->whereIn('post_id', $feedItems->pluck('id')->unique()->values())
+                ->whereIn('post_id', $reactableFeedItemIds)
                 ->where('alumni_id', $currentAlumniId)
                 ->pluck('post_id')
                 ->map(function ($postId) {
@@ -551,6 +617,7 @@ class PostController extends Controller
         $reactions = collect();
         $comments = collect();
         $reposts = collect();
+        $announcements = collect();
 
         if (!empty($ownedPostIds)) {
             $reactions = Reaction::with(['alumni:id,first_name,last_name,alumni_photo', 'post:id,caption,alumni_id,created_at'])
@@ -658,6 +725,38 @@ class PostController extends Controller
                 });
         }
 
+        $announcements = DB::table('announcements as announcement')
+            ->leftJoin('admins as admin', 'admin.id', '=', 'announcement.admin_id')
+            ->orderByDesc('announcement.date_posted')
+            ->limit(25)
+            ->get([
+                'announcement.id',
+                'announcement.title as announcement_title',
+                'announcement.announcement_description',
+                'announcement.date_posted',
+                'admin.admin_first_name',
+                'admin.admin_middle_name',
+                'admin.admin_last_name',
+                'admin.photo as admin_photo',
+            ])
+            ->map(function ($announcement) {
+                return [
+                    'id' => $this->buildNotificationKey('announcement', (int) $announcement->id),
+                    'type' => 'announcement',
+                    'source_id' => (int) $announcement->id,
+                    'actor' => [
+                        'id' => (int) $announcement->id,
+                        'first_name' => 'NU',
+                        'last_name' => 'LIPA',
+                        'alumni_photo' => $announcement->admin_photo,
+                    ],
+                    'post' => null,
+                    'detail' => $announcement->announcement_description,
+                    'announcement_title' => $announcement->announcement_title,
+                    'created_at' => $announcement->date_posted,
+                ];
+            });
+
         $followNotifications = DB::table('followers')
             ->join('alumnis', 'followers.follower_alumni_id', '=', 'alumnis.id')
             ->where('followers.followed_alumni_id', $currentAlumniId)
@@ -693,6 +792,7 @@ class PostController extends Controller
             ->concat($reactions)
             ->concat($comments)
             ->concat($reposts)
+            ->concat($announcements)
             ->concat($followNotifications)
             ->filter()
             ->reject(function (array $notification) use ($dismissedNotificationKeys) {
@@ -716,7 +816,7 @@ class PostController extends Controller
             ], 401);
         }
 
-        if (!preg_match('/^(reaction|comment|repost|follow)-\d+$/', $notificationKey)) {
+        if (!preg_match('/^(reaction|comment|repost|follow|announcement)-\d+$/', $notificationKey)) {
             return response()->json([
                 'message' => 'Invalid notification key.',
             ], 422);

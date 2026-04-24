@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AlumniProfileController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\EventRegistrationController;
 use App\Http\Controllers\EventController;
 use App\Http\Controllers\PostController;
 use App\Http\Controllers\PerkController;
@@ -36,6 +37,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/notifications/{notificationKey}', [PostController::class, 'dismissNotification']);
     Route::get('/posts', [PostController::class, 'index']);
     Route::post('/posts', [PostController::class, 'store']);
+    Route::get('/event-registrations', [EventRegistrationController::class, 'index']);
+    Route::post('/events/{event}/registrations', [EventRegistrationController::class, 'store']);
     Route::get('/posts/{post}/comments', [PostController::class, 'comments']);
     Route::post('/posts/{post}/reactions', [PostController::class, 'react']);
     Route::post('/posts/{post}/reposts', [PostController::class, 'repost']);
