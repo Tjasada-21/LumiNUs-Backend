@@ -4,6 +4,7 @@ use App\Http\Controllers\AlumniProfileController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\EventRegistrationController;
 use App\Http\Controllers\EventController;
+use App\Http\Controllers\MessageController;
 use App\Http\Controllers\PostController;
 use App\Http\Controllers\PerkController;
 use Illuminate\Http\Request;
@@ -28,6 +29,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/followers/{followRequestId}/accept', [AlumniProfileController::class, 'acceptFollowRequest']);
     Route::delete('/followers/{followRequestId}', [AlumniProfileController::class, 'declineFollowRequest']);
     Route::get('/contacts', [AlumniProfileController::class, 'contacts']);
+    Route::get('/messages/{alumni}', [MessageController::class, 'index']);
+    Route::post('/messages/{alumni}', [MessageController::class, 'store']);
+    Route::get('/messages/{contactId}', [MessageController::class, 'fetchThread']);
+    Route::post('/messages/{contactId}', [MessageController::class, 'sendMessage']);
+    Route::post('/messages/{contactId}/read', [MessageController::class, 'markAsRead']);
     Route::get('/events', [EventController::class, 'index']);
     Route::put('/alumni/profile', [AlumniProfileController::class, 'update']);
     Route::post('/alumni/photo', [AlumniProfileController::class, 'uploadPhoto']);
@@ -37,6 +43,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/notifications/{notificationKey}', [PostController::class, 'dismissNotification']);
     Route::get('/posts', [PostController::class, 'index']);
     Route::post('/posts', [PostController::class, 'store']);
+    Route::patch('/posts/{post}', [PostController::class, 'update']);
+    Route::delete('/posts/{post}', [PostController::class, 'destroy']);
     Route::get('/event-registrations', [EventRegistrationController::class, 'index']);
     Route::post('/events/{event}/registrations', [EventRegistrationController::class, 'store']);
     Route::delete('/events/{event}/registrations', [EventRegistrationController::class, 'destroy']);

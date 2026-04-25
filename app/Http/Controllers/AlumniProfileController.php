@@ -58,6 +58,47 @@ class AlumniProfileController extends Controller
         return rtrim($request->getSchemeAndHttpHost(), '/') . '/' . $normalizedPath;
     }
 
+    private function normalizeVisibility(?string $visibility): string
+    {
+        $normalizedVisibility = strtolower(trim((string) $visibility));
+
+        return in_array($normalizedVisibility, ['public', 'private', 'friends'], true)
+            ? $normalizedVisibility
+            : 'public';
+    }
+
+    private function alumniAreConnected(int $firstAlumniId, int $secondAlumniId): bool
+    {
+        return DB::table('followers')
+            ->where('follower_alumni_id', $firstAlumniId)
+            ->where('followed_alumni_id', $secondAlumniId)
+            ->where('status', Follower::STATUS_CONNECTED)
+            ->exists()
+            || DB::table('followers')
+                ->where('follower_alumni_id', $secondAlumniId)
+                ->where('followed_alumni_id', $firstAlumniId)
+                ->where('status', Follower::STATUS_CONNECTED)
+                ->exists();
+    }
+
+    private function canViewerSeePost(Post $post, ?int $viewerId): bool
+    {
+        if ($viewerId && $viewerId === (int) $post->alumni_id) {
+            return true;
+        }
+
+        if ($post->is_draft) {
+            return false;
+        }
+
+        return match ($this->normalizeVisibility($post->visibility ?? 'public')) {
+            'public' => true,
+            'private' => false,
+            'friends' => $viewerId ? $this->alumniAreConnected((int) $post->alumni_id, $viewerId) : false,
+            default => true,
+        };
+    }
+
     private function photoUploadCooldownResponse(Alumni $alumni)
     {
         $updatedAt = $alumni->updated_at;
@@ -133,6 +174,8 @@ class AlumniProfileController extends Controller
             'feed_id' => sprintf('post-%d', $post->id),
             'feed_type' => 'post',
             'caption' => $post->caption,
+            'visibility' => $post->visibility ?? 'public',
+            'is_draft' => (bool) $post->is_draft,
             'created_at' => $post->created_at,
             'alumni' => [
                 'id' => $post->alumni?->id,
@@ -154,11 +197,11 @@ class AlumniProfileController extends Controller
         ];
     }
 
-    private function buildRepostPayload(Repost $repost): ?array
+    private function buildRepostPayload(Repost $repost, ?int $viewerId = null): ?array
     {
         $originalPost = $repost->post;
 
-        if (!$originalPost) {
+        if (!$originalPost || !$this->canViewerSeePost($originalPost, $viewerId)) {
             return null;
         }
 
@@ -188,6 +231,8 @@ class AlumniProfileController extends Controller
             'original_post' => [
                 'id' => $originalPost->id,
                 'caption' => $originalPost->caption,
+                'visibility' => $originalPost->visibility ?? 'public',
+                'is_draft' => (bool) $originalPost->is_draft,
                 'created_at' => $originalPost->created_at,
                 'alumni' => [
                     'id' => $originalPost->alumni?->id,
@@ -491,30 +536,57 @@ class AlumniProfileController extends Controller
     public function search(Request $request)
     {
         $query = $request->query('q', '');
+        $currentAlumniId = $request->user()?->id;
 
-        if (strlen($query) < 2) {
+        if (strlen(trim($query)) < 2) {
+            $results = Alumni::query()
+                ->where(function ($queryBuilder) use ($currentAlumniId) {
+                    if ($currentAlumniId) {
+                        $queryBuilder->where('id', '!=', $currentAlumniId);
+                    }
+                })
+                ->limit(20)
+                ->get()
+                ->map(function ($alumni) use ($currentAlumniId) {
+                    return [
+                        'id' => $alumni->id,
+                        'first_name' => $alumni->first_name,
+                        'middle_name' => $alumni->middle_name,
+                        'last_name' => $alumni->last_name,
+                        'alumni_photo' => $alumni->alumni_photo,
+                        'connection_status' => $this->resolveConnectionStatus($alumni, $currentAlumniId),
+                    ];
+                })
+                ->toArray();
+
             return response()->json([
-                'results' => [],
+                'results' => $results,
             ]);
         }
 
         $searchTerm = "%{$query}%";
-        
+
         $results = Alumni::query()
-            ->where(function($q) use ($searchTerm) {
-                $q->whereRaw('LOWER(first_name) like LOWER(?)', [$searchTerm])
-                  ->orWhereRaw('LOWER(middle_name) like LOWER(?)', [$searchTerm])
-                  ->orWhereRaw('LOWER(last_name) like LOWER(?)', [$searchTerm]);
+            ->when($currentAlumniId, function ($queryBuilder) use ($currentAlumniId) {
+                $queryBuilder->where('id', '!=', $currentAlumniId);
+            })
+            ->where(function ($queryBuilder) use ($searchTerm) {
+                $queryBuilder->whereRaw('LOWER(first_name) like LOWER(?)', [$searchTerm])
+                    ->orWhereRaw('LOWER(middle_name) like LOWER(?)', [$searchTerm])
+                    ->orWhereRaw('LOWER(last_name) like LOWER(?)', [$searchTerm]);
             })
             ->limit(20)
             ->get()
-            ->map(fn($alumni) => [
-                'id' => $alumni->id,
-                'first_name' => $alumni->first_name,
-                'middle_name' => $alumni->middle_name,
-                'last_name' => $alumni->last_name,
-                'alumni_photo' => $alumni->alumni_photo,
-            ])
+            ->map(function ($alumni) use ($currentAlumniId) {
+                return [
+                    'id' => $alumni->id,
+                    'first_name' => $alumni->first_name,
+                    'middle_name' => $alumni->middle_name,
+                    'last_name' => $alumni->last_name,
+                    'alumni_photo' => $alumni->alumni_photo,
+                    'connection_status' => $this->resolveConnectionStatus($alumni, $currentAlumniId),
+                ];
+            })
             ->toArray();
 
         return response()->json([
@@ -532,24 +604,22 @@ class AlumniProfileController extends Controller
         ])
             ->withCount(['reactions', 'comments', 'reposts'])
             ->where('alumni_id', $alumni->id)
-            ->where('moderation_status', 'approved')
             ->orderByDesc('created_at')
             ->get()
+            ->filter(fn (Post $post) => $this->canViewerSeePost($post, $currentAlumniId))
             ->map(fn (Post $post) => $this->buildPostPayload($post));
 
         $reposts = Repost::with([
             'alumni:id,first_name,last_name,alumni_photo',
             'post.alumni:id,first_name,last_name,alumni_photo',
             'post.images:id,post_id,image_path',
+            'post:id,alumni_id,caption,created_at,visibility,is_draft',
         ])
             ->where('alumni_id', $alumni->id)
             ->where('moderation_status', 'approved')
-            ->whereHas('post', function ($query) {
-                $query->where('moderation_status', 'approved');
-            })
             ->orderByDesc('created_at')
             ->get()
-            ->map(fn (Repost $repost) => $this->buildRepostPayload($repost))
+            ->map(fn (Repost $repost) => $this->buildRepostPayload($repost, $currentAlumniId))
             ->filter()
             ->values();
 

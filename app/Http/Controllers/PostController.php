@@ -11,6 +11,7 @@ use App\Models\Post;
 use App\Models\Reaction;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class PostController extends Controller
 {
@@ -37,12 +38,81 @@ class PostController extends Controller
             ->all();
     }
 
+    private function normalizeVisibility(?string $visibility): string
+    {
+        $normalizedVisibility = strtolower(trim((string) $visibility));
+
+        return in_array($normalizedVisibility, ['public', 'private', 'friends'], true)
+            ? $normalizedVisibility
+            : 'public';
+    }
+
+    private function alumniAreConnected(int $firstAlumniId, int $secondAlumniId): bool
+    {
+        return DB::table('followers')
+            ->where('follower_alumni_id', $firstAlumniId)
+            ->where('followed_alumni_id', $secondAlumniId)
+            ->where('status', Follower::STATUS_CONNECTED)
+            ->exists()
+            || DB::table('followers')
+                ->where('follower_alumni_id', $secondAlumniId)
+                ->where('followed_alumni_id', $firstAlumniId)
+                ->where('status', Follower::STATUS_CONNECTED)
+                ->exists();
+    }
+
+    private function canViewerSeePost(Post $post, ?int $viewerId): bool
+    {
+        if ($viewerId && $viewerId === (int) $post->alumni_id) {
+            return true;
+        }
+
+        if ($post->is_draft) {
+            return false;
+        }
+
+        return match ($this->normalizeVisibility($post->visibility ?? 'public')) {
+            'public' => true,
+            'private' => false,
+            'friends' => $viewerId ? $this->alumniAreConnected((int) $post->alumni_id, $viewerId) : false,
+            default => true,
+        };
+    }
+
+    private function storePostImages(Post $post, array $imageFiles): void
+    {
+        foreach ($imageFiles as $imageFile) {
+            $imageExtension = $imageFile->getClientOriginalExtension() ?: $imageFile->extension() ?: 'jpg';
+            $imageName = sprintf('post-%d-%s.%s', $post->id, uniqid('', true), $imageExtension);
+            $storedPath = $imageFile->storeAs('post_images', $imageName, 'supabase');
+
+            ImagesPost::create([
+                'post_id' => $post->id,
+                'image_path' => $storedPath,
+            ]);
+        }
+    }
+
+    private function replacePostImages(Post $post, array $imageFiles): void
+    {
+        $existingImagePaths = $post->images()->pluck('image_path')->filter()->all();
+
+        if (!empty($existingImagePaths)) {
+            Storage::disk('supabase')->delete($existingImagePaths);
+        }
+
+        $post->images()->delete();
+        $this->storePostImages($post, $imageFiles);
+    }
+
     private function buildPostFeedItem(Post $post): array
     {
         return [
             'id' => $post->id,
             'feed_type' => 'post',
             'caption' => $post->caption,
+            'visibility' => $post->visibility ?? 'public',
+            'is_draft' => (bool) $post->is_draft,
             'created_at' => $post->created_at,
             'alumni' => [
                 'id' => $post->alumni?->id,
@@ -64,11 +134,11 @@ class PostController extends Controller
         ];
     }
 
-    private function buildRepostFeedItem(Repost $repost): ?array
+    private function buildRepostFeedItem(Repost $repost, ?int $viewerId = null): ?array
     {
         $originalPost = $repost->post;
 
-        if (!$originalPost) {
+        if (!$originalPost || !$this->canViewerSeePost($originalPost, $viewerId)) {
             return null;
         }
 
@@ -98,6 +168,8 @@ class PostController extends Controller
             'original_post' => [
                 'id' => $originalPost->id,
                 'caption' => $originalPost->caption,
+                'visibility' => $originalPost->visibility ?? 'public',
+                'is_draft' => (bool) $originalPost->is_draft,
                 'created_at' => $originalPost->created_at,
                 'alumni' => [
                     'id' => $originalPost->alumni?->id,
@@ -171,6 +243,17 @@ class PostController extends Controller
             $normalizedPath = substr($normalizedPath, strlen('storage/'));
         }
 
+        if (str_starts_with($normalizedPath, 'post_images/')) {
+            $baseUrl = rtrim((string) config('filesystems.disks.supabase.url'), '/');
+            $bucket = trim((string) config('filesystems.disks.supabase.bucket', 'luminus_assets'), '/');
+
+            if ($baseUrl !== '' && $bucket !== '') {
+                return sprintf('%s/%s/%s', $baseUrl, $bucket, ltrim($normalizedPath, '/'));
+            }
+
+            return rtrim($request->getSchemeAndHttpHost(), '/') . '/storage/' . ltrim($normalizedPath, '/');
+        }
+
         return rtrim($request->getSchemeAndHttpHost(), '/') . '/storage/' . ltrim($normalizedPath, '/');
     }
 
@@ -187,13 +270,19 @@ class PostController extends Controller
             ->orderByDesc('created_at')
             ->limit(50)
             ->get()
-            ->map(fn (Post $post) => $this->buildPostFeedItem($post));
+            ->map(function (Post $post) use ($currentAlumniId) {
+                return $this->canViewerSeePost($post, $currentAlumniId)
+                    ? $this->buildPostFeedItem($post)
+                    : null;
+            })
+            ->filter()
+            ->values();
 
         $reposts = Repost::with([
             'alumni:id,first_name,last_name,alumni_photo',
             'post.alumni:id,first_name,last_name,alumni_photo',
             'post.images:id,post_id,image_path',
-            'post:id,alumni_id,caption,created_at',
+            'post:id,alumni_id,caption,created_at,visibility,is_draft',
         ])
             ->where('moderation_status', 'approved')
             ->whereHas('post', function ($query) {
@@ -202,7 +291,7 @@ class PostController extends Controller
             ->orderByDesc('created_at')
             ->limit(50)
             ->get()
-            ->map(fn (Repost $repost) => $this->buildRepostFeedItem($repost))
+            ->map(fn (Repost $repost) => $this->buildRepostFeedItem($repost, $currentAlumniId))
             ->filter()
             ->values();
 
@@ -291,31 +380,44 @@ class PostController extends Controller
     {
         $validated = $request->validate([
             'caption' => 'nullable|string|max:10000',
+            'visibility' => 'nullable|in:public,private,friends',
+            'is_draft' => 'sometimes|boolean',
+            'remove_image_ids' => 'sometimes|array|max:10',
+            'remove_image_ids.*' => 'integer',
             'images' => 'sometimes|array|max:10',
             'images.*' => 'image|max:5120',
         ]);
 
+        $isDraft = $request->boolean('is_draft');
+        $visibility = $this->normalizeVisibility($validated['visibility'] ?? 'public');
+
+        $hasImages = $request->hasFile('images') && !empty($request->file('images', []));
+        $caption = isset($validated['caption']) ? trim($validated['caption']) : null;
+
+        if ($caption === '') {
+            $caption = null;
+        }
+
+        if (!$isDraft && $caption === null && !$hasImages) {
+            return response()->json([
+                'message' => 'Add text or media before publishing a post.',
+            ], 422);
+        }
+
         $post = DB::transaction(function () use ($request, $validated) {
             $caption = isset($validated['caption']) ? trim($validated['caption']) : null;
-
-            if ($caption === '') {
-                $caption = null;
-            }
+            $visibility = $this->normalizeVisibility($validated['visibility'] ?? 'public');
+            $isDraft = $request->boolean('is_draft');
 
             $post = Post::create([
                 'alumni_id' => $request->user()->id,
                 'caption' => $caption,
+                'visibility' => $visibility,
+                'is_draft' => $isDraft,
                 'moderation_status' => 'approved',
             ]);
 
-            foreach ($request->file('images', []) as $imageFile) {
-                $storedPath = $imageFile->store('posts', 'public');
-
-                ImagesPost::create([
-                    'post_id' => $post->id,
-                    'image_path' => $storedPath,
-                ]);
-            }
+            $this->storePostImages($post, $request->file('images', []));
 
             return $post->load('images');
         });
@@ -333,6 +435,8 @@ class PostController extends Controller
             'post' => [
                 'id' => $post->id,
                 'caption' => $post->caption,
+                'visibility' => $post->visibility ?? 'public',
+                'is_draft' => (bool) $post->is_draft,
                 'created_at' => $post->created_at,
                 'alumni' => [
                     'id' => $post->alumni_id,
@@ -350,8 +454,137 @@ class PostController extends Controller
         ], 201);
     }
 
+    public function update(Request $request, Post $post)
+    {
+        $currentAlumniId = $request->user()?->id;
+
+        if (!$currentAlumniId || (int) $post->alumni_id !== $currentAlumniId) {
+            return response()->json([
+                'message' => 'You do not have permission to edit this post.',
+            ], 403);
+        }
+
+        $validated = $request->validate([
+            'caption' => 'nullable|string|max:10000',
+            'visibility' => 'nullable|in:public,private,friends',
+            'is_draft' => 'sometimes|boolean',
+            'remove_image_ids' => 'sometimes|array|max:10',
+            'remove_image_ids.*' => 'integer',
+            'images' => 'sometimes|array|max:10',
+            'images.*' => 'image|max:5120',
+        ]);
+
+        $caption = array_key_exists('caption', $validated) ? trim((string) $validated['caption']) : $post->caption;
+
+        if ($caption === '') {
+            $caption = null;
+        }
+
+        $visibility = $this->normalizeVisibility($validated['visibility'] ?? $post->visibility ?? 'public');
+        $isDraft = $request->has('is_draft') ? $request->boolean('is_draft') : (bool) $post->is_draft;
+        $removedImageIds = collect($validated['remove_image_ids'] ?? [])
+            ->map(fn ($imageId) => (int) $imageId)
+            ->filter(fn ($imageId) => $imageId > 0)
+            ->unique()
+            ->values()
+            ->all();
+        $hasImages = $request->hasFile('images') && !empty($request->file('images', []));
+        $remainingExistingImageCount = $post->images()->when(!empty($removedImageIds), function ($query) use ($removedImageIds) {
+            $query->whereNotIn('id', $removedImageIds);
+        })->count();
+
+        if (!$isDraft && $caption === null && !$hasImages && $remainingExistingImageCount === 0) {
+            return response()->json([
+                'message' => 'Add text or media before publishing a post.',
+            ], 422);
+        }
+
+        DB::transaction(function () use ($post, $caption, $visibility, $isDraft, $request, $hasImages, $removedImageIds) {
+            $post->update([
+                'caption' => $caption,
+                'visibility' => $visibility,
+                'is_draft' => $isDraft,
+            ]);
+
+            if (!empty($removedImageIds)) {
+                $imagesToRemove = $post->images()->whereIn('id', $removedImageIds)->get();
+                $imagePaths = $imagesToRemove->pluck('image_path')->filter()->all();
+
+                if (!empty($imagePaths)) {
+                    Storage::disk('supabase')->delete($imagePaths);
+                }
+
+                if ($imagesToRemove->isNotEmpty()) {
+                    $imagesToRemove->each->delete();
+                }
+            }
+
+            if ($hasImages) {
+                $this->storePostImages($post, $request->file('images', []));
+            }
+        });
+
+        $post->load(['alumni:id,first_name,last_name,alumni_photo', 'images:id,post_id,image_path']);
+
+        return response()->json([
+            'message' => 'Post updated successfully.',
+            'post' => [
+                'id' => $post->id,
+                'caption' => $post->caption,
+                'visibility' => $post->visibility ?? 'public',
+                'is_draft' => (bool) $post->is_draft,
+                'created_at' => $post->created_at,
+                'alumni' => [
+                    'id' => $post->alumni?->id,
+                    'first_name' => $post->alumni?->first_name,
+                    'last_name' => $post->alumni?->last_name,
+                    'alumni_photo' => $post->alumni?->alumni_photo,
+                ],
+                'images' => $post->images->map(function (ImagesPost $image) use ($request) {
+                    return [
+                        'id' => $image->id,
+                        'image_path' => $image->image_path,
+                        'image_url' => $this->resolveImageUrl($request, $image->image_path),
+                    ];
+                })->values(),
+            ],
+        ]);
+    }
+
+    public function destroy(Request $request, Post $post)
+    {
+        $currentAlumniId = $request->user()?->id;
+
+        if (!$currentAlumniId || (int) $post->alumni_id !== $currentAlumniId) {
+            return response()->json([
+                'message' => 'You do not have permission to delete this post.',
+            ], 403);
+        }
+
+        DB::transaction(function () use ($post) {
+            $imagePaths = $post->images()->pluck('image_path')->filter()->all();
+
+            if (!empty($imagePaths)) {
+                Storage::disk('supabase')->delete($imagePaths);
+            }
+
+            $post->images()->delete();
+            $post->delete();
+        });
+
+        return response()->json([
+            'message' => 'Post deleted successfully.',
+        ]);
+    }
+
     public function react(Request $request, Post $post)
     {
+        if (!$this->canViewerSeePost($post, $request->user()?->id)) {
+            return response()->json([
+                'message' => 'This post is no longer available.',
+            ], 403);
+        }
+
         $validated = $request->validate([
             'reaction' => 'required|in:like',
         ]);
@@ -395,6 +628,12 @@ class PostController extends Controller
 
     public function comment(Request $request, Post $post)
     {
+        if (!$this->canViewerSeePost($post, $request->user()?->id)) {
+            return response()->json([
+                'message' => 'This post is no longer available.',
+            ], 403);
+        }
+
         $validated = $request->validate([
             'comment' => 'required|string|max:10000',
             'parent_id' => 'nullable|integer|exists:comments,id',
@@ -465,6 +704,12 @@ class PostController extends Controller
 
     public function repost(Request $request, Post $post)
     {
+        if (!$this->canViewerSeePost($post, $request->user()?->id)) {
+            return response()->json([
+                'message' => 'This post is no longer available.',
+            ], 403);
+        }
+
         $validated = $request->validate([
             'caption' => 'nullable|string|max:10000',
         ]);
@@ -562,6 +807,12 @@ class PostController extends Controller
 
     public function comments(Request $request, Post $post)
     {
+        if (!$this->canViewerSeePost($post, $request->user()?->id)) {
+            return response()->json([
+                'comments' => [],
+            ], 403);
+        }
+
         $comments = Comment::with(['alumni:id,first_name,last_name,alumni_photo', 'parentComment.alumni:id,first_name,last_name,alumni_photo'])
             ->where('post_id', $post->id)
             ->where('moderation_status', 'approved')
@@ -851,87 +1102,21 @@ class PostController extends Controller
         ])
             ->withCount(['reactions', 'comments', 'reposts'])
             ->where('alumni_id', $currentAlumniId)
-            ->where('moderation_status', 'approved')
             ->orderByDesc('created_at')
             ->get()
-            ->map(function (Post $post) {
-                return [
-                    'id' => $post->id,
-                    'feed_id' => sprintf('post-%d', $post->id),
-                    'feed_type' => 'post',
-                    'caption' => $post->caption,
-                    'created_at' => $post->created_at,
-                    'alumni' => [
-                        'id' => $post->alumni?->id,
-                        'first_name' => $post->alumni?->first_name,
-                        'last_name' => $post->alumni?->last_name,
-                        'alumni_photo' => $post->alumni?->alumni_photo,
-                    ],
-                    'comment_count' => $post->comments_count ?? 0,
-                    'reaction_count' => $post->reactions_count ?? 0,
-                    'repost_count' => $post->reposts_count ?? 0,
-                    'images' => $post->images->map(function (ImagesPost $image) {
-                        return [
-                            'id' => $image->id,
-                            'image_path' => $image->image_path,
-                        ];
-                    })->values(),
-                ];
-            });
+            ->map(fn (Post $post) => $this->buildPostFeedItem($post));
 
         $reposts = Repost::with([
             'alumni:id,first_name,last_name,alumni_photo',
             'post.alumni:id,first_name,last_name,alumni_photo',
             'post.images:id,post_id,image_path',
+            'post:id,alumni_id,caption,created_at,visibility,is_draft',
         ])
             ->where('alumni_id', $currentAlumniId)
             ->where('moderation_status', 'approved')
-            ->whereHas('post', function ($query) {
-                $query->where('moderation_status', 'approved');
-            })
             ->orderByDesc('created_at')
             ->get()
-            ->map(function (Repost $repost) {
-                $originalPost = $repost->post;
-
-                if (!$originalPost) {
-                    return null;
-                }
-
-                return [
-                    'id' => $originalPost->id,
-                    'feed_id' => sprintf('repost-%d', $repost->id),
-                    'feed_type' => 'repost',
-                    'caption' => $repost->caption,
-                    'created_at' => $repost->created_at,
-                    'alumni' => [
-                        'id' => $repost->alumni?->id,
-                        'first_name' => $repost->alumni?->first_name,
-                        'last_name' => $repost->alumni?->last_name,
-                        'alumni_photo' => $repost->alumni?->alumni_photo,
-                    ],
-                    'comment_count' => $originalPost->comments()->count(),
-                    'reaction_count' => $originalPost->reactions()->count(),
-                    'repost_count' => $originalPost->reposts()->count(),
-                    'images' => $originalPost->images->map(function (ImagesPost $image) {
-                        return [
-                            'id' => $image->id,
-                            'image_path' => $image->image_path,
-                        ];
-                    })->values(),
-                    'original_post' => [
-                        'id' => $originalPost->id,
-                        'caption' => $originalPost->caption,
-                        'created_at' => $originalPost->created_at,
-                        'alumni' => [
-                            'id' => $originalPost->alumni?->id,
-                            'first_name' => $originalPost->alumni?->first_name,
-                            'last_name' => $originalPost->alumni?->last_name,
-                            'alumni_photo' => $originalPost->alumni?->alumni_photo,
-                        ],
-                    ],
-                ];
-            })
+            ->map(fn (Repost $repost) => $this->buildRepostFeedItem($repost, $currentAlumniId))
             ->filter()
             ->values();
 

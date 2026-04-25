@@ -16,7 +16,13 @@ class Post extends Model
     protected $fillable = [
         'alumni_id',
         'caption',
+        'visibility',
+        'is_draft',
         'moderation_status',
+    ];
+
+    protected $casts = [
+        'is_draft' => 'boolean',
     ];
 
     public function images(): HasMany
