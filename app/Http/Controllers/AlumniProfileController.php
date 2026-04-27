@@ -449,13 +449,17 @@ class AlumniProfileController extends Controller
             )
             ->orderByDesc('created_at')
             ->get()
-            ->map(function ($contact) {
+            ->map(function ($contact) use ($request) {
+                $contactPhoto = $contact->alumni_photo
+                    ? $this->resolveStorageUrl($request, (string) $contact->alumni_photo)
+                    : null;
+
                 return [
                     'id' => (int) $contact->id,
                     'connection_id' => (int) $contact->connection_id,
                     'first_name' => $contact->first_name,
                     'last_name' => $contact->last_name,
-                    'alumni_photo' => $contact->alumni_photo,
+                    'alumni_photo' => $contactPhoto,
                     'is_read' => is_null($contact->is_read) ? null : (bool) $contact->is_read,
                     'created_at' => $contact->created_at,
                 ];

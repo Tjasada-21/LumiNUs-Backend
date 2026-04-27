@@ -13,6 +13,7 @@ return new class extends Migration
 {
     Schema::create('tracer_forms', function (Blueprint $table) {
         $table->id(); // Form_ID
+        $table->foreignId('admin_id')->constrained('admins')->onDelete('cascade');//Admin_ID foreign key
         $table->string('form_title');
         $table->text('form_description')->nullable();
         $table->text('form_header')->nullable();
