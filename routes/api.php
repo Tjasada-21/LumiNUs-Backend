@@ -29,8 +29,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/followers/{followRequestId}/accept', [AlumniProfileController::class, 'acceptFollowRequest']);
     Route::delete('/followers/{followRequestId}', [AlumniProfileController::class, 'declineFollowRequest']);
     Route::get('/contacts', [AlumniProfileController::class, 'contacts']);
-    Route::get('/messages/{alumni}', [MessageController::class, 'index']);
-    Route::post('/messages/{alumni}', [MessageController::class, 'store']);
+    Route::get('/messages/unread-count', [MessageController::class, 'unreadCount']);
     Route::get('/messages/{contactId}', [MessageController::class, 'fetchThread']);
     Route::post('/messages/{contactId}', [MessageController::class, 'sendMessage']);
     Route::post('/messages/{contactId}/read', [MessageController::class, 'markAsRead']);

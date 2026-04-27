@@ -8,12 +8,26 @@ use Illuminate\Support\Facades\Auth;
 
 class MessageController extends Controller
 {
+    public function unreadCount(Request $request)
+    {
+        $userId = $request->user()->id;
+
+        $unreadCount = Message::where('receiver_id', $userId)
+            ->where('is_read', false)
+            ->count();
+
+        return response()->json([
+            'unread_count' => $unreadCount,
+        ]);
+    }
+
     // 1. Fetch the entire chat history between the logged-in user and a specific contact
     public function fetchThread(Request $request, $contactId)
     {
         $userId = $request->user()->id; // The currently logged-in alumni
 
-        $messages = Message::where(function ($query) use ($userId, $contactId) {
+        $messages = Message::with('sender')
+            ->where(function ($query) use ($userId, $contactId) {
                 // Messages I sent to them
                 $query->where('sender_id', $userId)
                       ->where('receiver_id', $contactId);

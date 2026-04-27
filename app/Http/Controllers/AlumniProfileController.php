@@ -428,6 +428,7 @@ class AlumniProfileController extends Controller
                 'alumnis.last_name',
                 'alumnis.alumni_photo',
                 'followers.created_at',
+                DB::raw("(SELECT messages.is_read FROM messages WHERE messages.sender_id = alumnis.id AND messages.receiver_id = {$currentAlumniId} ORDER BY messages.created_at DESC LIMIT 1) as is_read"),
             ])
             ->union(
                 DB::table('followers')
@@ -443,6 +444,7 @@ class AlumniProfileController extends Controller
                         'alumnis.last_name',
                         'alumnis.alumni_photo',
                         'followers.created_at',
+                        DB::raw("(SELECT messages.is_read FROM messages WHERE messages.sender_id = alumnis.id AND messages.receiver_id = {$currentAlumniId} ORDER BY messages.created_at DESC LIMIT 1) as is_read"),
                     ])
             )
             ->orderByDesc('created_at')
@@ -454,6 +456,7 @@ class AlumniProfileController extends Controller
                     'first_name' => $contact->first_name,
                     'last_name' => $contact->last_name,
                     'alumni_photo' => $contact->alumni_photo,
+                    'is_read' => is_null($contact->is_read) ? null : (bool) $contact->is_read,
                     'created_at' => $contact->created_at,
                 ];
             })
