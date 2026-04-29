@@ -21,12 +21,14 @@ Route::middleware('auth:sanctum')->group(function () {
         return $request->user();
     });
 
+    Route::post('/save-push-token', [AuthController::class, 'savePushToken']);
     Route::get('/alumni/profile', [AlumniProfileController::class, 'show']);
     Route::get('/alumni/profile/posts', [PostController::class, 'myPosts']);
     Route::get('/alumni/search', [AlumniProfileController::class, 'search']);
     Route::get('/alumni/{alumni}', [AlumniProfileController::class, 'view']);
     Route::get('/alumni/{alumni}/posts', [AlumniProfileController::class, 'posts']);
     Route::post('/alumni/{alumni}/follow', [AlumniProfileController::class, 'follow']);
+    Route::delete('/alumni/{alumni}/follow', [AlumniProfileController::class, 'unfollow']);
     Route::post('/followers/{followRequestId}/accept', [AlumniProfileController::class, 'acceptFollowRequest']);
     Route::delete('/followers/{followRequestId}', [AlumniProfileController::class, 'declineFollowRequest']);
     Route::get('/contacts', [AlumniProfileController::class, 'contacts']);

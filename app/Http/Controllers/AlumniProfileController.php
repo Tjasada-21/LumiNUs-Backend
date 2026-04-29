@@ -340,6 +340,46 @@ class AlumniProfileController extends Controller
         ]);
     }
 
+    public function unfollow(Request $request, Alumni $alumni)
+    {
+        $currentAlumni = $request->user();
+
+        if (!$currentAlumni) {
+            return response()->json([
+                'message' => 'No active session found.',
+            ], 401);
+        }
+
+        if ($currentAlumni->id === $alumni->id) {
+            return response()->json([
+                'message' => 'You cannot remove your own profile.',
+            ], 422);
+        }
+
+        $deleted = DB::table('followers')
+            ->where(function ($query) use ($currentAlumni, $alumni) {
+                $query->where(function ($pair) use ($currentAlumni, $alumni) {
+                    $pair->where('follower_alumni_id', $currentAlumni->id)
+                        ->where('followed_alumni_id', $alumni->id);
+                })->orWhere(function ($pair) use ($currentAlumni, $alumni) {
+                    $pair->where('follower_alumni_id', $alumni->id)
+                        ->where('followed_alumni_id', $currentAlumni->id);
+                });
+            })
+            ->delete();
+
+        if (!$deleted) {
+            return response()->json([
+                'message' => 'Connection not found.',
+            ], 404);
+        }
+
+        return response()->json([
+            'message' => 'Connection removed.',
+            'removed' => true,
+        ]);
+    }
+
     public function acceptFollowRequest(Request $request, int $followRequestId)
     {
         $currentAlumniId = $request->user()?->id;

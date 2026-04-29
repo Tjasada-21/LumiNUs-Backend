@@ -78,6 +78,17 @@ class AuthController extends Controller
         ]);
     }
 
+    public function savePushToken(Request $request)
+{
+    $request->validate(['token' => 'required|string']);
+    
+    $alumni = $request->user();
+    $alumni->expo_push_token = $request->token;
+    $alumni->save();
+
+    return response()->json(['message' => 'Token saved successfully']);
+}
+
     public function sendPasswordResetLink(Request $request)
     {
         $request->validate([
