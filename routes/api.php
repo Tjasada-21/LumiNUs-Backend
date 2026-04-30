@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AlumniProfileController;
+use App\Http\Controllers\AlumniEmploymentController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\EventRegistrationController;
 use App\Http\Controllers\EventController;
@@ -11,11 +12,15 @@ use App\Http\Controllers\PerkController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
+// Public routes
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/forgot-password', [AuthController::class, 'sendPasswordResetLink']);
 Route::post('/reset-password', [AuthController::class, 'resetPassword']);
+Route::get('/events', [EventController::class, 'index']);
+Route::get('/perks', [PerkController::class, 'index']);
 
+// Protected routes
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', function (Request $request) {
         return $request->user();
@@ -43,11 +48,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/group-chats/{groupChat}/read', [GroupChatController::class, 'markAsRead']);
     Route::post('/group-chats/{groupChat}/messages/{message}/react', [GroupChatController::class, 'react']);
     Route::delete('/group-chats/{groupChat}/messages/{message}', [GroupChatController::class, 'destroy']);
-    Route::get('/events', [EventController::class, 'index']);
     Route::put('/alumni/profile', [AlumniProfileController::class, 'update']);
     Route::post('/alumni/photo', [AlumniProfileController::class, 'uploadPhoto']);
     Route::post('/alumni/reset-password', [AuthController::class, 'resetAccountPassword']);
-    Route::get('/perks', [PerkController::class, 'index']);
     Route::get('/notifications', [PostController::class, 'notifications']);
     Route::delete('/notifications/{notificationKey}', [PostController::class, 'dismissNotification']);
     Route::get('/posts', [PostController::class, 'index']);
@@ -62,6 +65,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/posts/{post}/reposts', [PostController::class, 'repost']);
     Route::post('/posts/{post}/comments', [PostController::class, 'comment']);
     Route::post('/upload-photo', [AlumniProfileController::class, 'uploadProfilePhoto']);
+    Route::post('/alumni/employments', [AlumniEmploymentController::class, 'store']);
+    Route::patch('/alumni/employments/{employment}', [AlumniEmploymentController::class, 'update']);
+    Route::delete('/alumni/employments/{employment}', [AlumniEmploymentController::class, 'destroy']);
 
     // We will put things like creating posts, answering tracer studies,
     // and sending messages inside here later!

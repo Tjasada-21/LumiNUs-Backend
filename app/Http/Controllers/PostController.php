@@ -243,7 +243,12 @@ class PostController extends Controller
             $normalizedPath = substr($normalizedPath, strlen('storage/'));
         }
 
-        if (str_starts_with($normalizedPath, 'post_images/')) {
+        if (
+            str_starts_with($normalizedPath, 'post_images/')
+            || str_starts_with($normalizedPath, 'announcement_images/')
+            || str_starts_with($normalizedPath, 'announcements_images/')
+            || str_starts_with($normalizedPath, 'announcements_images/')
+        ) {
             $baseUrl = rtrim((string) config('filesystems.disks.supabase.url'), '/');
             $bucket = trim((string) config('filesystems.disks.supabase.bucket', 'luminus_assets'), '/');
 

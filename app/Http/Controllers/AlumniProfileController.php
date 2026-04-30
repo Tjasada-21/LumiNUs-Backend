@@ -164,7 +164,37 @@ class AlumniProfileController extends Controller
             ->count();
         $payload['connection_status'] = $this->resolveConnectionStatus($alumni, $viewerId);
 
+        // Add work experiences
+        $payload['work_experiences'] = DB::table('alumni_employments')
+            ->where('alumni_id', $alumni->id)
+            ->orderByDesc('created_at')
+            ->get()
+            ->map(function ($emp) {
+                return [
+                    'id' => (int) $emp->id,
+                    'title' => $emp->job_title,
+                    'subtitle' => $emp->company,
+                    'period' => $this->buildPeriodString($emp->start_date, $emp->end_date),
+                    'startYear' => $emp->start_date ? (int) date('Y', strtotime($emp->start_date)) : null,
+                    'endYear' => $emp->end_date ? (int) date('Y', strtotime($emp->end_date)) : null,
+                    'location' => $emp->location,
+                    'description' => $emp->career_description,
+                ];
+            })
+            ->values()
+            ->toArray();
+
         return $payload;
+    }
+
+    private function buildPeriodString($startDate, $endDate)
+    {
+        if (!$startDate && !$endDate) {
+            return '';
+        }
+        $start = $startDate ? date('Y', strtotime($startDate)) : 'Present';
+        $end = $endDate ? date('Y', strtotime($endDate)) : 'Present';
+        return "{$start} - {$end}";
     }
 
     private function buildPostPayload(Post $post): array
