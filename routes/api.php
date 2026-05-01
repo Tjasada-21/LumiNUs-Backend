@@ -9,6 +9,7 @@ use App\Http\Controllers\GroupChatController;
 use App\Http\Controllers\MessageController;
 use App\Http\Controllers\PostController;
 use App\Http\Controllers\PerkController;
+use App\Http\Controllers\TracerFormController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -65,6 +66,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/posts/{post}/reposts', [PostController::class, 'repost']);
     Route::post('/posts/{post}/comments', [PostController::class, 'comment']);
     Route::post('/upload-photo', [AlumniProfileController::class, 'uploadProfilePhoto']);
+    Route::get('/tracer-forms', [TracerFormController::class, 'index']);
     Route::post('/alumni/employments', [AlumniEmploymentController::class, 'store']);
     Route::patch('/alumni/employments/{employment}', [AlumniEmploymentController::class, 'update']);
     Route::delete('/alumni/employments/{employment}', [AlumniEmploymentController::class, 'destroy']);
