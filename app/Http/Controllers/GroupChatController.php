@@ -7,10 +7,48 @@ use App\Models\GroupChat;
 use App\Models\GroupChatMember;
 use App\Models\GroupMessage;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 class GroupChatController extends Controller
 {
+    public function typingStatus(Request $request, GroupChat $groupChat)
+    {
+        $userId = (int) $request->user()->id;
+        $this->ensureMembership($userId, $groupChat);
+
+        $typingUsers = $this->getTypingUsersForGroup($groupChat, $userId);
+
+        return response()->json([
+            'is_typing' => !empty($typingUsers),
+            'typing_users' => $typingUsers,
+        ]);
+    }
+
+    public function setTypingStatus(Request $request, GroupChat $groupChat)
+    {
+        $validated = $request->validate([
+            'is_typing' => ['sometimes', 'boolean'],
+        ]);
+
+        $userId = (int) $request->user()->id;
+        $this->ensureMembership($userId, $groupChat);
+
+        $isTyping = $validated['is_typing'] ?? true;
+        $typingKey = $this->groupTypingKey($groupChat->id, $userId);
+
+        if ($isTyping) {
+            Cache::put($typingKey, true, now()->addSeconds(6));
+        } else {
+            Cache::forget($typingKey);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'is_typing' => $isTyping,
+        ]);
+    }
+
     public function index(Request $request)
     {
         $userId = $request->user()->id;
@@ -222,5 +260,29 @@ class GroupChatController extends Controller
         if ((int) $message->group_chat_id !== (int) $groupChat->id) {
             abort(404);
         }
+    }
+
+    private function getTypingUsersForGroup(GroupChat $groupChat, int $currentUserId): array
+    {
+        return $groupChat->members
+            ->filter(function (Alumni $member) use ($groupChat, $currentUserId) {
+                return (int) $member->id !== $currentUserId
+                    && Cache::has($this->groupTypingKey($groupChat->id, (int) $member->id));
+            })
+            ->map(function (Alumni $member) {
+                return [
+                    'id' => $member->id,
+                    'first_name' => $member->first_name,
+                    'last_name' => $member->last_name,
+                    'alumni_photo' => $member->alumni_photo,
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    private function groupTypingKey(int $groupChatId, int $userId): string
+    {
+        return sprintf('chat_typing:group:%d:%d', $groupChatId, $userId);
     }
 }

@@ -2,24 +2,24 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\TracerForms;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\DB;
 
 class TracerFormController extends Controller
 {
     public function index(): JsonResponse
     {
-        $forms = DB::table('tracer_forms')
+        $forms = TracerForms::query()
             ->select([
                 'id',
+                'admin_id',
                 'form_title',
-                'form_description',
                 'form_header',
-                'is_active',
+                'form_description',
+                'status',
                 'created_at',
                 'updated_at',
             ])
-            ->where('is_active', true)
             ->orderByDesc('created_at')
             ->get();
 

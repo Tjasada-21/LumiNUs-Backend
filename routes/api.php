@@ -20,6 +20,7 @@ Route::post('/forgot-password', [AuthController::class, 'sendPasswordResetLink']
 Route::post('/reset-password', [AuthController::class, 'resetPassword']);
 Route::get('/events', [EventController::class, 'index']);
 Route::get('/perks', [PerkController::class, 'index']);
+Route::get('/tracer-forms', [TracerFormController::class, 'index']);
 
 // Protected routes
 Route::middleware('auth:sanctum')->group(function () {
@@ -42,11 +43,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/messages/{contactId}', [MessageController::class, 'fetchThread']);
     Route::post('/messages/{contactId}', [MessageController::class, 'sendMessage']);
     Route::post('/messages/{contactId}/read', [MessageController::class, 'markAsRead']);
+    Route::get('/messages/{contactId}/typing', [MessageController::class, 'typingStatus']);
+    Route::post('/messages/{contactId}/typing', [MessageController::class, 'setTypingStatus']);
     Route::get('/group-chats', [GroupChatController::class, 'index']);
     Route::post('/group-chats', [GroupChatController::class, 'store']);
     Route::get('/group-chats/{groupChat}/messages', [GroupChatController::class, 'messages']);
     Route::post('/group-chats/{groupChat}/messages', [GroupChatController::class, 'sendMessage']);
     Route::post('/group-chats/{groupChat}/read', [GroupChatController::class, 'markAsRead']);
+    Route::get('/group-chats/{groupChat}/typing', [GroupChatController::class, 'typingStatus']);
+    Route::post('/group-chats/{groupChat}/typing', [GroupChatController::class, 'setTypingStatus']);
     Route::post('/group-chats/{groupChat}/messages/{message}/react', [GroupChatController::class, 'react']);
     Route::delete('/group-chats/{groupChat}/messages/{message}', [GroupChatController::class, 'destroy']);
     Route::put('/alumni/profile', [AlumniProfileController::class, 'update']);
@@ -66,7 +71,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/posts/{post}/reposts', [PostController::class, 'repost']);
     Route::post('/posts/{post}/comments', [PostController::class, 'comment']);
     Route::post('/upload-photo', [AlumniProfileController::class, 'uploadProfilePhoto']);
-    Route::get('/tracer-forms', [TracerFormController::class, 'index']);
     Route::post('/alumni/employments', [AlumniEmploymentController::class, 'store']);
     Route::patch('/alumni/employments/{employment}', [AlumniEmploymentController::class, 'update']);
     Route::delete('/alumni/employments/{employment}', [AlumniEmploymentController::class, 'destroy']);

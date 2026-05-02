@@ -2,12 +2,54 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Alumni;
 use App\Models\Message;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 
 class MessageController extends Controller
 {
+    public function typingStatus(Request $request, $contactId)
+    {
+        $userId = (int) $request->user()->id;
+        $contactId = (int) $contactId;
+
+        $typingUsers = [];
+        $contact = Alumni::find($contactId);
+
+        if ($contact && $this->isDirectTypingActive($userId, $contactId, $contactId)) {
+            $typingUsers[] = $this->formatTypingUser($contact);
+        }
+
+        return response()->json([
+            'is_typing' => !empty($typingUsers),
+            'typing_users' => $typingUsers,
+        ]);
+    }
+
+    public function setTypingStatus(Request $request, $contactId)
+    {
+        $validated = $request->validate([
+            'is_typing' => ['sometimes', 'boolean'],
+        ]);
+
+        $userId = (int) $request->user()->id;
+        $contactId = (int) $contactId;
+        $isTyping = $validated['is_typing'] ?? true;
+        $typingKey = $this->directTypingKey($userId, $contactId, $userId);
+
+        if ($isTyping) {
+            Cache::put($typingKey, true, now()->addSeconds(6));
+        } else {
+            Cache::forget($typingKey);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'is_typing' => $isTyping,
+        ]);
+    }
+
     public function unreadCount(Request $request)
     {
         $userId = $request->user()->id;
@@ -81,5 +123,28 @@ class MessageController extends Controller
             ->update(['is_read' => true]);
 
         return response()->json(['status' => 'success']);
+    }
+
+    private function directTypingKey(int $userId, int $contactId, int $typingUserId): string
+    {
+        $pair = [$userId, $contactId];
+        sort($pair);
+
+        return sprintf('chat_typing:direct:%d:%d:%d', $pair[0], $pair[1], $typingUserId);
+    }
+
+    private function isDirectTypingActive(int $userId, int $contactId, int $typingUserId): bool
+    {
+        return Cache::has($this->directTypingKey($userId, $contactId, $typingUserId));
+    }
+
+    private function formatTypingUser(Alumni $alumni): array
+    {
+        return [
+            'id' => $alumni->id,
+            'first_name' => $alumni->first_name,
+            'last_name' => $alumni->last_name,
+            'alumni_photo' => $alumni->alumni_photo,
+        ];
     }
 }
