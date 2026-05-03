@@ -2,8 +2,10 @@
 
 namespace App\Models;
 
+use App\Models\TracerQuestion;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class TracerForms extends Model
 {
@@ -22,4 +24,9 @@ class TracerForms extends Model
     protected $casts = [
         'status' => 'integer',
     ];
+
+    public function tracerQuestions(): HasMany
+    {
+        return $this->hasMany(TracerQuestion::class, 'form_id')->orderBy('order_priority');
+    }
 }

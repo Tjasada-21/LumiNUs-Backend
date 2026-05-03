@@ -74,6 +74,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/alumni/employments', [AlumniEmploymentController::class, 'store']);
     Route::patch('/alumni/employments/{employment}', [AlumniEmploymentController::class, 'update']);
     Route::delete('/alumni/employments/{employment}', [AlumniEmploymentController::class, 'destroy']);
+    Route::post('/tracer-forms/{form}/submit', [TracerFormController::class, 'submit']);
+    Route::get('/tracer-forms/{form}/user-response', [TracerFormController::class, 'userResponse']);
 
     // We will put things like creating posts, answering tracer studies,
     // and sending messages inside here later!
