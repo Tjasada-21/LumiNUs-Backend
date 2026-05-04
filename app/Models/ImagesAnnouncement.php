@@ -5,33 +5,20 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use App\Models\Announcement;
 
-class Reaction extends Model
+class ImagesAnnouncement extends Model
 {
     use HasFactory;
 
-    protected $table = 'reactions';
+    protected $table = 'images_announcements';
 
     protected $fillable = [
-        'alumni_id',
-        'post_id',
         'announcement_id',
-        'reaction',
+        'image_path',
     ];
-
-    public function post(): BelongsTo
-    {
-        return $this->belongsTo(Post::class, 'post_id');
-    }
 
     public function announcement(): BelongsTo
     {
         return $this->belongsTo(Announcement::class, 'announcement_id');
-    }
-
-    public function alumni(): BelongsTo
-    {
-        return $this->belongsTo(Alumni::class, 'alumni_id');
     }
 }

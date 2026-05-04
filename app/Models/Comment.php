@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use App\Models\Announcement;
 
 class Comment extends Model
 {
@@ -16,6 +17,7 @@ class Comment extends Model
     protected $fillable = [
         'alumni_id',
         'post_id',
+        'announcement_id',
         'parent_id',
         'comment',
         'moderation_status',
@@ -24,6 +26,11 @@ class Comment extends Model
     public function post(): BelongsTo
     {
         return $this->belongsTo(Post::class, 'post_id');
+    }
+
+    public function announcement(): BelongsTo
+    {
+        return $this->belongsTo(Announcement::class, 'announcement_id');
     }
 
     public function alumni(): BelongsTo
