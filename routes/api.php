@@ -19,6 +19,7 @@ Route::post('/login', [AuthController::class, 'login']);
 Route::post('/forgot-password', [AuthController::class, 'sendPasswordResetLink']);
 Route::post('/reset-password', [AuthController::class, 'resetPassword']);
 Route::get('/events', [EventController::class, 'index']);
+Route::get('/events/{event}', [EventController::class, 'show']);
 Route::get('/perks', [PerkController::class, 'index']);
 Route::get('/tracer-forms', [TracerFormController::class, 'index']);
 

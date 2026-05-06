@@ -74,6 +74,18 @@ class EventController extends Controller
         ];
     }
 
+    public function show(Request $request, Event $event)
+    {
+        $event->load([
+            'venue:id,name,address,latitude,longitude',
+            'images:id,event_id,image_path,updated_at',
+        ]);
+
+        return response()->json([
+            'event' => $this->buildEventPayload($request, $event),
+        ]);
+    }
+
     public function index(Request $request)
     {
         $events = Event::with([
